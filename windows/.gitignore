@@ -1,0 +1,22 @@
+flutter/ephemeral/
+
+# Visual Studio user-specific files.
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio build-related files.
+x64/
+x86/
+
+# Visual Studio cache files
+# files ending in .cache can be ignored
+*.[Cc]ache
+# but keep track of directories ending in .cache
+!*.[Cc]ache/
+
+# 内置服务的二进制：体积大不入库，由构建期嵌进包内（见 README）。只留目录骨架。
+server/**
+!server/**/
+!server/.gitkeep

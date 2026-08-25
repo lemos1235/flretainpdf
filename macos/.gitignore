@@ -1,0 +1,12 @@
+# Flutter-related
+**/Flutter/ephemeral/
+**/Pods/
+
+# Xcode-related
+**/dgph
+**/xcuserdata/
+
+# 内置服务的二进制：体积大不入库，由构建期嵌进包内（见 README）。只留目录骨架。
+server/**
+!server/**/
+!server/.gitkeep

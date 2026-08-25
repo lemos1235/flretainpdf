@@ -1,0 +1,192 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+            # retainpdf-rs / typst release assets are named using the Rust target triple
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      # The backend repo is private and GITHUB_TOKEN has no cross-repo permission,
+      # so a PAT with repo read access is required.
+      - name: Download retainpdf-rs binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::Missing secrets.PRIVATE_REPO_TOKEN (needs contents:read access to lemos1235/retainpdf-rs)"
+            exit 1
+          fi
+          mkdir -p downloads/server
+          gh release download -R lemos1235/retainpdf-rs --pattern "*${TARGET}*" --dir downloads/server
+          cd downloads/server
+          for f in *; do
+            case "$f" in
+              # The macOS runner doesn't have 7z preinstalled; unzip is available on both
+              # platforms, so only fall back to 7z when unzip is missing on Windows.
+              *.zip)
+                if command -v unzip >/dev/null 2>&1; then
+                  unzip -o -q "$f"
+                else
+                  7z x -y "$f" >/dev/null
+                fi
+                ;;
+              *.tar.gz) tar -xzf "$f" ;;
+              *) echo "::warning::Unrecognized archive format $f, skipped" ;;
+            esac
+          done
+
+      - name: Download typst binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view -R typst/typst --json tagName -q .tagName)"
+          echo "typst $tag"
+          mkdir -p downloads/typst
+          cd downloads/typst
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            asset="typst-${TARGET}.zip"
+            curl -fsSL -o "$asset" "https://github.com/typst/typst/releases/download/$tag/$asset"
+            if command -v unzip >/dev/null 2>&1; then
+              unzip -o -q "$asset"
+            else
+              7z x -y "$asset" >/dev/null
+            fi
+          else
+            asset="typst-${TARGET}.tar.xz"
+            curl -fsSL -o "$asset" "https://github.com/typst/typst/releases/download/$tag/$asset"
+            tar -xJf "$asset"
+          fi
+
+      # macOS uses Xcode's Embed Server Binaries (source dir macos/server/),
+      # Windows uses CMake's install rules (source dir windows/server/).
+      - name: Stage server binaries
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          dest="${PLATFORM}/server"
+          mkdir -p "$dest"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            server_exe="$(find downloads/server -name retainpdf-rs.exe -type f | head -n1)"
+            typst_exe="$(find downloads/typst -name typst.exe -type f | head -n1)"
+          else
+            server_exe="$(find downloads/server -name retainpdf-rs -type f | head -n1)"
+            typst_exe="$(find downloads/typst -name typst -type f | head -n1)"
+          fi
+          for exe in "$server_exe" "$typst_exe"; do
+            if [[ -z "$exe" ]]; then
+              echo "::error::Server binary not found in the downloaded archive"
+              exit 1
+            fi
+            cp "$exe" "$dest/"
+            chmod u+wx "$dest/$(basename "$exe")"
+          done
+          ls -l "$dest"
+
+      - run: flutter pub get
+
+      # macOS release builds a universal binary by default, but the bundled server
+      # only ships an arm64 slice. Without locking the architecture, the lipo check
+      # in embed_server_binaries.sh fails outright on x86_64. The asset name is
+      # already aarch64-apple-darwin since we only ever release for Apple Silicon.
+      - name: Force arm64-only macOS build
+        if: runner.os == 'macOS'
+        run: flutter config --enable-macos-arm64-only
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: flutter build macos --release --build-name="$VERSION" --build-number=${{ github.run_number }}
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: flutter build windows --release --build-name="$VERSION" --build-number=${{ github.run_number }}
+
+      - name: Package
+        id: pack
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          name="flretainpdf-${VERSION}-${TARGET}"
+          mkdir -p dist
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp README.md "build/windows/x64/runner/Release/" 2>/dev/null || true
+            7z a -tzip "dist/$name.zip" "./build/windows/x64/runner/Release/*" >/dev/null
+          else
+            app="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n1)"
+            # Use ditto instead of zip: zip would drop the .app's signature and symlinks.
+            ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$name.zip"
+          fi
+          echo "asset=dist/$name.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ steps.pack.outputs.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*

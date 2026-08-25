@@ -1,0 +1,8 @@
+#include "../../Flutter/Flutter-Release.xcconfig"
+#include "Warnings.xcconfig"
+
+// 只出 Apple Silicon 版：内置的 retainpdf-rs / typst 二进制目前只有 arm64，
+// Release/Profile 默认的 ARCHS_STANDARD 会带上 x86_64，embed_server_binaries.sh
+// 检查架构时就会失败。要恢复 Intel 支持，先用 lipo 把两个后端二进制合成
+// universal binary 放进 macos/server/，再删掉这一行。
+ARCHS = arm64

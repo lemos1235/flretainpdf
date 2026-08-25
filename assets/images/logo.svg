@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- 底色透明 -->
+  <rect width="100" height="100" fill="none"/>
+
+  <!-- 原有的 "ẍ" (带横杠的X)，使用 currentColor 自适应主题色 -->
+  <g fill="currentColor">
+    <!-- 上面的一点 -->
+    <rect x="30" y="5" width="10" height="10" rx="2" fill="currentColor"/>
+    <!-- 中间的横杠 -->
+    <rect x="5" y="20" width="60" height="8" rx="2" fill="currentColor"/>
+    <!-- X 的左下部分 -->
+    <path d="M 15 40 L 40 40 L 25 65 L 10 65 Z" fill="currentColor"/>
+    <!-- X 的右下部分 -->
+    <path d="M 45 40 L 55 40 L 55 50 L 35 75 L 25 75 Z" fill="currentColor"/>
+  </g>
+
+  <!-- 新增的 PDF 元素（替换了原图右下角的 A） -->
+  <g transform="translate(45, 65)">
+    <!-- 红色背景框 -->
+    <rect x="0" y="0" width="50" height="30" rx="5" fill="#E74C3C"/>
+    <!-- PDF 文字 -->
+    <text x="25" y="22" font-family="Arial, sans-serif" font-weight="bold" font-size="18" fill="white" text-anchor="middle">PDF</text>
+  </g>
+</svg>
