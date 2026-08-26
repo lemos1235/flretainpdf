@@ -29,12 +29,16 @@ class Win32Window {
   virtual ~Win32Window();
 
   // Creates a win32 window with |title| that is positioned and sized using
-  // |origin| and |size|. New windows are created on the default monitor. Window
-  // sizes are specified to the OS in physical pixels, hence to ensure a
-  // consistent size this function will scale the inputted width and height as
-  // as appropriate for the default monitor. The window is invisible until
-  // |Show| is called. Returns true if the window was created successfully.
-  bool Create(const std::wstring& title, const Point& origin, const Size& size);
+  // |origin| and |size|. New windows are created on the default monitor.
+  // |size| 与 |minimum_size| 都是逻辑像素下的**客户区**尺寸（和 macOS 的
+  // contentRect / minSize 语义一致），函数内部按显示器 DPI 缩放并补上边框。
+  // 若注册表里存有上次退出时的窗口位置，则优先沿用它，忽略 |origin|/|size|。
+  // The window is invisible until |Show| is called. Returns true if the window
+  // was created successfully.
+  bool Create(const std::wstring& title,
+              const Point& origin,
+              const Size& size,
+              const Size& minimum_size);
 
   // Show the current window. Returns true if the window was successfully shown.
   bool Show();
@@ -89,6 +93,12 @@ class Win32Window {
 
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
+
+  // 窗口最小客户区尺寸（逻辑像素），在 WM_GETMINMAXINFO 里按当前 DPI 换算。
+  Size minimum_size_ = Size(0, 0);
+
+  // 上次退出时窗口是最大化的，Show() 需要直接以最大化状态显示。
+  bool start_maximized_ = false;
 
   bool quit_on_close_ = false;
 

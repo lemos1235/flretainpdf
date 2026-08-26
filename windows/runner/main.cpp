@@ -2,8 +2,21 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include "app_constants.h"
 #include "flutter_window.h"
+#include "single_instance.h"
 #include "utils.h"
+
+namespace {
+
+// 默认窗口尺寸和最小尺寸都按客户区算，与 macOS 端
+// MainFlutterWindow.swift 里的 800x628 / 740x540 保持一致。
+constexpr int kDefaultWidth = 800;
+constexpr int kDefaultHeight = 628;
+constexpr int kMinimumWidth = 740;
+constexpr int kMinimumHeight = 540;
+
+}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -11,6 +24,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
     CreateAndAttachConsole();
+  }
+
+  // 已有实例在运行时（比如用户又双击了一次 exe），激活老窗口并退出，
+  // 避免开出多个互相抢本地配置的实例。
+  if (ActivateExistingInstanceIfRunning(kWindowTitle)) {
+    return EXIT_SUCCESS;
   }
 
   // Initialize COM, so that it is available for use in the library and/or
@@ -26,8 +45,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"PDF Translator", origin, size)) {
+  Win32Window::Size size(kDefaultWidth, kDefaultHeight);
+  Win32Window::Size minimum_size(kMinimumWidth, kMinimumHeight);
+  if (!window.Create(kWindowTitle, origin, size, minimum_size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
