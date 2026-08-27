@@ -5,7 +5,9 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-const baseUrl = 'http://127.0.0.1:40010';
+/// 服务实际监听的地址。默认端口，[BackendService] 在探测到端口被占用后
+/// 会改写成实际找到的那个。
+String baseUrl = 'http://127.0.0.1:40010';
 
 const _tokenHeader = 'X-RetainPDF-Token';
 

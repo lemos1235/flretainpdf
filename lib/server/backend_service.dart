@@ -10,12 +10,24 @@ import '../settings/task_concurrency.dart';
 import 'runtime_installer.dart';
 import 'runtime_layout.dart';
 
-/// 服务监听的端口。要和 [baseUrl] 对得上。
+/// 服务监听的默认端口。实际使用的端口可能因为被占用而往后顺延，见
+/// [BackendService._spawnWithPortRetry]；那时 [baseUrl] 会被同步改写。
 const kServerPort = 40010;
+
+/// 端口探测的搜索范围：[kServerPort, kServerPort + kPortSearchLimit)。
+/// 全部被占用就放弃启动，避免无限找下去。
+const kPortSearchLimit = 20;
 
 /// 等 `/health` 就绪的总时限。首次启动要读 45 MB 的 typst 和字体，给宽一点。
 const _readyTimeout = Duration(seconds: 20);
 const _probeInterval = Duration(milliseconds: 250);
+
+/// 子进程如果因为端口被占用 bind 失败，会在这段时间内就退出；退出后再探测
+/// 一次端口是否还占着，据此判断是不是端口冲突、该换下一个端口重试，而不是
+/// 死等 20 秒超时或者直接报错。
+const _bindGracePeriod = Duration(milliseconds: 400);
+
+enum _SpawnResult { started, portConflict, otherFailure }
 
 enum BackendPhase { probing, installing, launching, waiting, ready, failed }
 
@@ -52,6 +64,10 @@ class BackendService extends ChangeNotifier {
   final _logLines = <String>[];
   static const _maxLogLines = 50;
 
+  /// 每次端口重试自增一次。上一次尝试的进程日志是异步到达的，clear() 之后
+  /// 可能还有尾巴飘过来，靠这个把它们和当前尝试的日志区分开、扔掉过期的。
+  int _logGeneration = 0;
+
   BackendPhase get phase => _phase;
 
   /// 给用户看的一句话状态。
@@ -63,6 +79,10 @@ class BackendService extends ChangeNotifier {
   bool get isReady => _phase == BackendPhase.ready;
 
   bool get hasFailed => _phase == BackendPhase.failed;
+
+  /// 本次实际用的端口；启动完成前是 null。从 [baseUrl] 解析，避免和它各自
+  /// 存一份、手动同步。
+  int? get port => isReady ? Uri.parse(baseUrl).port : null;
 
   /// 幂等：重复调用返回同一个 Future。
   Future<void> start() {
@@ -93,7 +113,10 @@ class BackendService extends ChangeNotifier {
       );
 
       _update(BackendPhase.launching, '正在启动服务…');
-      await _spawn(layout);
+      await _spawnWithPortRetry(layout);
+      if (_phase == BackendPhase.failed) {
+        return; // _spawnWithPortRetry 已经报过错了。
+      }
 
       _update(BackendPhase.waiting, '等待服务就绪…');
       await _waitReady();
@@ -177,9 +200,66 @@ class BackendService extends ChangeNotifier {
     }
   }
 
-  Future<void> _spawn(RuntimeLayout layout) async {
+  /// 从 [kServerPort] 起逐个尝试启动，最多试 [kPortSearchLimit] 个端口。
+  ///
+  /// 不预先探测端口是否空闲：探测和子进程真正 bind 之间总有时间窗口，本质
+  /// 上堵不住别的进程抢先占用 (TOCTOU)，所以直接让子进程去 bind，靠它在宽限
+  /// 期内因端口冲突退出这件事本身来判断，换下一个端口重试。
+  Future<void> _spawnWithPortRetry(RuntimeLayout layout) async {
+    var candidate = kServerPort;
+    final limit = kServerPort + kPortSearchLimit;
+    while (candidate < limit) {
+      // dispose() 随时可能在两次尝试之间发生，别再往下起新进程了。
+      if (_disposed) {
+        return;
+      }
+      _logLines.clear();
+      final generation = ++_logGeneration;
+      final result = await _trySpawn(layout, candidate, generation);
+      if (_disposed) {
+        // dispose() 发生在这次尝试进行中：如果它已经 bind 成功并被记到
+        // _process 上，shutdown() 那次早跑完了、什么都没杀到，这里得补杀。
+        if (result == _SpawnResult.started) {
+          await _stopProcess();
+        }
+        return;
+      }
+      switch (result) {
+        case _SpawnResult.started:
+          baseUrl = 'http://127.0.0.1:$candidate';
+          return;
+        case _SpawnResult.portConflict:
+          candidate++;
+          continue;
+        case _SpawnResult.otherFailure:
+          return; // _trySpawn 已经调用过 _fail。
+      }
+    }
+    // 端口占用的判断是「退出后这个端口还是绑不上」，如果子进程其实是别的原因
+    // 崩的（比如缺字体），又恰好撞上端口被无关程序占着，会被误判成冲突，一路
+    // 重试到把 20 个端口试完。带上最后一次尝试的日志，别让真实的崩溃原因随
+    // 每轮 _logLines.clear() 一起消失。
+    _fail(
+      '端口 $kServerPort-${limit - 1} 均被占用。',
+      detail:
+          '请关闭占用这些端口的程序后重试。\n\n'
+          '最后一次尝试（端口 ${limit - 1}）的日志：\n${_logTail()}',
+    );
+  }
+
+  /// 以 [port] 启动子进程；返回结果区分「正常起来了」「疑似端口冲突，可以
+  /// 换端口重试」「其他失败，已经报过错，别再试了」三种情况。
+  Future<_SpawnResult> _trySpawn(
+    RuntimeLayout layout,
+    int port,
+    int generation,
+  ) async {
     final dataDir = await _installer.dataDirectory();
     dataDir.createSync(recursive: true);
+
+    if (_disposed) {
+      return _SpawnResult.otherFailure;
+    }
 
     // Each launch gets a fresh random token so an old/leaked value can't be
     // replayed.  The same value is set on [_api] so all our requests match.
@@ -187,7 +267,7 @@ class BackendService extends ChangeNotifier {
     _api.apiToken = token;
 
     final environment = {
-      'APP_PORT': '$kServerPort',
+      'APP_PORT': '$port',
       // 不用默认的 0.0.0.0：那会触发 macOS 的「允许接受传入网络连接」弹窗。
       'APP_BIND_HOST': '127.0.0.1',
       'APP_DATA_DIR': dataDir.path,
@@ -210,12 +290,38 @@ class BackendService extends ChangeNotifier {
       workingDirectory: layout.root.path,
       environment: environment,
     );
+    _pipe(process.stdout, generation);
+    _pipe(process.stderr, generation);
+
+    final earlyExitCode = await Future.any<int?>([
+      process.exitCode,
+      Future<int?>.delayed(_bindGracePeriod, () => null),
+    ]);
+
+    if (_disposed) {
+      // App 正在关闭：活着的进程直接杀掉，退出报告也不用管了，_spawnWithPortRetry
+      // 那边看到 _disposed 就会直接收尾。
+      if (earlyExitCode == null) {
+        process.kill(ProcessSignal.sigkill);
+      }
+      return _SpawnResult.otherFailure;
+    }
+
+    if (earlyExitCode != null) {
+      // 子进程已经退出，端口占用状态不会再因为这次探测本身而改变，不存在
+      // TOCTOU：这时候如果这个端口还是绑不上，基本可以断定它是被别的进程占
+      // 着，子进程就是因为这个才退出的；绑得上就说明是别的原因，不重试。
+      if (await _isPortOccupied(port)) {
+        return _SpawnResult.portConflict;
+      }
+      _failProcessExited(earlyExitCode);
+      return _SpawnResult.otherFailure;
+    }
+
+    // 活过了宽限期，当作 bind 成功，接管正常生命周期监听。
     _process = process;
     _pidFile?.parent.createSync(recursive: true);
     _pidFile?.writeAsStringSync('${process.pid}');
-
-    _pipe(process.stdout);
-    _pipe(process.stderr);
     unawaited(
       process.exitCode.then((code) {
         if (_process != process) {
@@ -224,17 +330,40 @@ class BackendService extends ChangeNotifier {
         _process = null;
         // 就绪之前就退了，没必要干等 20 秒超时，直接报错并带上日志尾。
         if (_phase != BackendPhase.ready) {
-          _fail('服务进程意外退出（退出码 $code）。', detail: _logTail());
+          _failProcessExited(code);
         }
       }),
     );
+    return _SpawnResult.started;
   }
 
-  void _pipe(Stream<List<int>> stream) {
+  void _failProcessExited(int code) {
+    _fail('服务进程意外退出（退出码 $code）。', detail: _logTail());
+  }
+
+  /// 尝试 bind 一下就关掉，用来确认端口这会儿是不是被占着。
+  Future<bool> _isPortOccupied(int port) async {
+    try {
+      final socket = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        port,
+      );
+      await socket.close();
+      return false;
+    } on SocketException {
+      return true;
+    }
+  }
+
+  void _pipe(Stream<List<int>> stream, int generation) {
     stream
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) {
+          // 上一轮端口尝试的尾巴才到——那一轮已经放弃了，不要混进当前日志。
+          if (generation != _logGeneration) {
+            return;
+          }
           if (_logLines.length >= _maxLogLines) {
             _logLines.removeAt(0);
           }
