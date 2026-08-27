@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import 'task_concurrency.dart';
 
 /// 设置页里的字段，跨次启动记住 —— 包括密钥/Token：用户明确要求重开 App
 /// 不必重填，所以它们和其它字段一样写进 shared_preferences（明文）。
@@ -39,6 +40,9 @@ class AppSettings extends ChangeNotifier {
 
   ThemeMode _themeMode = ThemeMode.system;
 
+  int _maxConcurrentTasks = kDefaultMaxConcurrentTasks;
+  int _activeMaxConcurrentTasks = 0;
+
   /// 外观：跟随系统 / 常亮 / 常暗。
   ThemeMode get themeMode => _themeMode;
 
@@ -50,6 +54,27 @@ class AppSettings extends ChangeNotifier {
     _prefs?.setString(_themeModeKey, value.name);
     notifyListeners();
   }
+
+  /// 同时执行的任务数上限，超出的任务在服务端排队等待。
+  int get maxConcurrentTasks => _maxConcurrentTasks;
+
+  set maxConcurrentTasks(int value) {
+    final next = value.clamp(kMinMaxConcurrentTasks, kMaxMaxConcurrentTasks);
+    if (_maxConcurrentTasks == next) {
+      return;
+    }
+    _maxConcurrentTasks = next;
+    _prefs?.setInt(kMaxConcurrentTasksKey, next);
+    notifyListeners();
+  }
+
+  /// 正在跑的那个服务进程实际用的上限（0 表示没问到）。
+  int get activeMaxConcurrentTasks => _activeMaxConcurrentTasks;
+
+  /// 并发上限是服务进程启动时定死的，改完得重启 App 才算数。
+  bool get maxConcurrentTasksNeedsRestart =>
+      _activeMaxConcurrentTasks > 0 &&
+      _activeMaxConcurrentTasks != _maxConcurrentTasks;
 
   /// 读服务端默认值失败时的提示，设置页顶部会显示。
   String loadError = '';
@@ -65,23 +90,37 @@ class AppSettings extends ChangeNotifier {
 
   /// 先拿服务端默认值打底，再让本地存过的配置覆盖上去。
   Future<void> load(ApiClient api) async {
-    try {
-      final config = await api.fetchConfig();
-      translationModel.text = config.translationModel;
-      translationBaseUrl.text = config.translationBaseUrl;
-      mineruBaseUrl.text = config.mineruBaseUrl;
-      loadError = '';
-    } catch (error) {
-      loadError = describeError(error);
-    }
-
+    // 只存在本地、服务端没有对应项的字段（外观、并发上限）先读，别等网络。
+    //
+    // 主界面是服务一就绪就挂上去的，没人等 load() 跑完 —— 用户完全可能在
+    // fetchConfig 还悬着的时候就进设置页调并发上限。那时 `_prefs` 要是还没
+    // 赋值，setter 里的 `_prefs?.setInt` 就静默丢了，紧接着下面这行覆盖写又
+    // 把内存里的值按旧值刷回去，界面上表现为「刚调的数字自己跳回去了」。
+    // fetchConfig 没有超时，服务起来了但 /api/config 慢的时候窗口能相当长。
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
+    _maxConcurrentTasks = readMaxConcurrentTasks(prefs);
     final storedTheme = prefs.getString(_themeModeKey);
     _themeMode = ThemeMode.values.firstWhere(
       (mode) => mode.name == storedTheme,
       orElse: () => ThemeMode.system,
     );
+    // 这两项已经是最终值了，先让界面用上，不必陪着网络一起等。
+    notifyListeners();
+
+    try {
+      final config = await api.fetchConfig();
+      translationModel.text = config.translationModel;
+      translationBaseUrl.text = config.translationBaseUrl;
+      mineruBaseUrl.text = config.mineruBaseUrl;
+      _activeMaxConcurrentTasks = config.maxConcurrentTasks;
+      loadError = '';
+    } catch (error) {
+      loadError = describeError(error);
+    }
+
+    // 文本字段反过来：服务端默认值打底，本地存过的再覆盖上去，所以这段必须
+    // 留在 fetchConfig 之后。
     final stored =
         _read(prefs, _storageKey) ?? _read(prefs, _legacyFormStorageKey);
     if (stored != null) {

@@ -24,7 +24,8 @@ int? _stepIndex(String id) {
 
 String formatStatus(String status) {
   const mapping = {
-    'queued': '准备中',
+    'preparing': '准备中',
+    'queued': '排队中',
     'extracting': '分析中',
     'translating': '翻译中',
     'rendering': '排版中',
@@ -34,11 +35,24 @@ String formatStatus(String status) {
   return mapping[status] ?? status;
 }
 
+/// 任务是在等一个执行槽位（而不是刚建好、正在准备）。
+///
+/// 后端把「还没开跑」拆成了两个状态：`preparing` 是刚创建、马上就要开始，
+/// `queued` 是抢不到并发槽位停在队列里。早先两者共用 `queued`，只能从 message
+/// 里的措辞反推；现在有了结构化状态，不必再猜。
+bool isWaitingForSlot(JobSummary job) => job.status == 'queued';
+
+/// 任务还没开始跑：`preparing`（刚创建）或 `queued`（卡在并发上限上排队）。
+/// 后端对这两种一视同仁地允许删除，删除即取消。
+bool isPendingJob(JobSummary job) =>
+    job.status == 'preparing' || job.status == 'queued';
+
 String formatJobMessage(JobSummary job) {
   if (job.message.trim().isNotEmpty) {
     return job.message;
   }
   const mapping = {
+    'preparing': '任务已创建，等待开始处理。',
     'queued': '任务已进入队列，等待开始处理。',
     'extracting': '正在分析页面结构并提取文本。',
     'translating': '正在批量翻译文档内容。',
@@ -86,6 +100,12 @@ JobProgress summarizeJobProgress(JobSummary job) {
         _clampProgress(percent.round()),
       );
     }
+  }
+
+  // 排队等槽位的任务还没真正开始，进度条留在 0：给它 9% 会让人以为在跑。
+  // `preparing` 不走这里 —— 它马上就开跑，和 webapp 一样吃默认的那 9%。
+  if (isWaitingForSlot(job)) {
+    return const JobProgress('当前阶段：排队等待', '等待中', 0);
   }
 
   final defaultPercent = (activeStepIndex + 0.45) / totalSteps * 100;

@@ -4,6 +4,7 @@ import '../widgets/app_panel.dart';
 import '../widgets/labeled_field.dart';
 import 'app_settings.dart';
 import 'appearance_selector.dart';
+import 'concurrency_selector.dart';
 
 /// 设置页：放和具体文档无关的全局配置 —— 翻译模型接入信息、MinerU 服务地址。
 /// 布局沿用主页的 `.page-shell`（限宽居中 + 卡片），只是内容更窄一些。
@@ -191,6 +192,19 @@ class SettingsPage extends StatelessWidget {
                         ],
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 任务并发卡片
+                AppPanel(
+                  title: '任务并发',
+                  subtitle: '同时最多跑几个翻译任务，超出的自动排队。',
+                  child: ConcurrencySelector(
+                    value: settings.maxConcurrentTasks,
+                    activeValue: settings.activeMaxConcurrentTasks,
+                    needsRestart: settings.maxConcurrentTasksNeedsRestart,
+                    onChanged: (value) => settings.maxConcurrentTasks = value,
                   ),
                 ),
                 const SizedBox(height: 12),

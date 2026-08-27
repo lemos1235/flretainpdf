@@ -9,6 +9,7 @@ import 'prefs_scope.dart';
 import 'server/backend_boot_page.dart';
 import 'server/backend_service.dart';
 import 'settings/app_settings.dart';
+import 'settings/task_concurrency.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -40,7 +41,14 @@ class RetainPdfApp extends StatefulWidget {
 class _RetainPdfAppState extends State<RetainPdfApp> {
   late final _api = widget.api ?? ApiClient();
   final _settings = AppSettings();
-  late final _backend = widget.backend ?? BackendService(api: _api);
+  // 并发上限传的是回调而不是值：服务是在 initState 里就启动的，那时
+  // AppSettings 还没 load（它要等服务就绪），所以直接从 prefs 里现取。
+  late final _backend =
+      widget.backend ??
+      BackendService(
+        api: _api,
+        maxConcurrentTasks: () => readMaxConcurrentTasks(_prefs),
+      );
 
   /// macOS 上关窗退出走 onExitRequested，在这里把服务子进程收掉。
   /// 在 initState 里显式赋值：靠求值一个 late 字段来触发初始化太隐晦，

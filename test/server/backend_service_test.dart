@@ -20,6 +20,24 @@ class _FailingInstaller extends RuntimeInstaller {
   }
 }
 
+/// 装得上：返回一个指向临时目录的 layout，里面摆着假的"服务二进制"。
+class _StubInstaller extends RuntimeInstaller {
+  _StubInstaller(this.dir) : super(supportDirectory: () async => dir);
+
+  final Directory dir;
+
+  @override
+  Future<RuntimeLayout> ensureInstalled({void Function(String)? onStep}) async {
+    return RuntimeLayout(
+      root: Directory('${dir.path}${Platform.pathSeparator}runtime')
+        ..createSync(recursive: true),
+      binaryDirectoryOverride: Directory(
+        '${dir.path}${Platform.pathSeparator}bin',
+      ),
+    );
+  }
+}
+
 /// 同样装不上，但支持目录是真的，好让 _reapOrphan 能读到 pid 文件。
 class _InstallerWithSupportDir extends RuntimeInstaller {
   _InstallerWithSupportDir(Directory dir)
@@ -87,4 +105,45 @@ void main() {
     expect(pidFile.existsSync(), isFalse, reason: '过期的 pid 文件仍然要清掉');
     backend.dispose();
   }, skip: Platform.isWindows ? 'sleep 是 POSIX 命令' : null);
+
+  test('并发上限作为 APP_MAX_CONCURRENT_TASKS 传给服务进程', () async {
+    final support = Directory.systemTemp.createTempSync('retainpdf-env');
+    addTearDown(() => support.deleteSync(recursive: true));
+
+    // 假二进制：把自己拿到的环境变量抄进文件，然后挂着不退 —— 真的服务在这
+    // 一步也是常驻的，提前退出会让 BackendService 报「进程意外退出」。
+    final envDump = '${support.path}${Platform.pathSeparator}env.txt';
+    final binDir = Directory('${support.path}${Platform.pathSeparator}bin')
+      ..createSync(recursive: true);
+    final exe = File(
+      '${binDir.path}${Platform.pathSeparator}$serverExeName',
+    )..writeAsStringSync('#!/bin/sh\nenv > "$envDump"\nsleep 30\n');
+    Process.runSync('chmod', ['+x', exe.path]);
+
+    final backend = BackendService(
+      api: _api(healthy: () => true),
+      installer: _StubInstaller(support),
+      maxConcurrentTasks: () => 7,
+    );
+    addTearDown(backend.dispose);
+
+    await backend.start();
+
+    expect(backend.isReady, isTrue, reason: backend.detail);
+    // /health 是 mock 的，一探就通，脚本未必已经写完 env.txt —— 等一下它。
+    // 等的是「内容出现」而不是「文件出现」：`env > file` 里的重定向是 shell
+    // 在 exec env 之前就做的，文件先被建成空的，输出随后才落进去，只等
+    // existsSync 会有一个能读到空串的窗口。
+    final dump = File(envDump);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    String contents() => dump.existsSync() ? dump.readAsStringSync() : '';
+    while (!contents().contains('APP_MAX_CONCURRENT_TASKS=7') &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    expect(contents(), contains('APP_MAX_CONCURRENT_TASKS=7'));
+    // 诊断信息里也要看得到，排查「为什么还在排队」时用得上。
+    expect(backend.detail, contains('APP_MAX_CONCURRENT_TASKS=7'));
+    await backend.shutdown();
+  }, skip: Platform.isWindows ? '假二进制是 sh 脚本' : null);
 }

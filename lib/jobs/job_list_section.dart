@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -22,12 +24,34 @@ class JobListSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final app = AppColors.of(context);
+    final waiting = jobs.where(isWaitingForSlot).length;
     return AppPanel(
       title: '任务列表',
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // 有任务在等槽位时单独标出来，免得用户以为卡住了。
+          if (waiting > 0) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: app.accentSubtle,
+                border: Border.all(color: app.accentBorder),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$waiting 个排队中',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: app.accentText,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           if (jobs.isNotEmpty) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -272,7 +296,8 @@ class _JobCardState extends State<_JobCard> {
             ),
           ],
 
-          // 操作按钮。删除只给跑完的任务：处理中的任务后端也会拒绝。
+          // 操作按钮。跑完的任务能删，还没开跑的能撤（后端把删除待执行
+          // 任务当取消处理）；正在跑的后端会拒绝，按钮就别出现了。
           if (job.translatedPdfUrl.isNotEmpty || _deletable) ...[
             const SizedBox(height: 10),
             Row(
@@ -310,9 +335,18 @@ class _JobCardState extends State<_JobCard> {
                             height: 15,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.delete_outline, size: 15),
+                        : Icon(
+                            _cancelable
+                                ? Icons.close
+                                : Icons.delete_outline,
+                            size: 15,
+                          ),
                     onPressed: _deleting ? null : _delete,
-                    label: Text(_deleting ? '正在删除…' : '删除任务'),
+                    label: Text(
+                      _deleting
+                          ? (_cancelable ? '正在取消…' : '正在删除…')
+                          : (_cancelable ? '取消任务' : '删除任务'),
+                    ),
                   ),
                 ],
               ],
@@ -323,20 +357,30 @@ class _JobCardState extends State<_JobCard> {
     );
   }
 
-  /// 只有跑完（成功或失败）的任务能删，与 webapp 的按钮显示条件一致。
+  /// 跑完（成功或失败）或还没开跑的任务能删，与 webapp 的按钮显示条件一致。
   bool get _deletable =>
-      widget.job.status == 'completed' || widget.job.status == 'failed';
+      widget.job.status == 'completed' ||
+      widget.job.status == 'failed' ||
+      isPendingJob(widget.job);
+
+  /// 还没开跑的任务删掉就是「取消」，按钮和提示都换个说法。文案说「取消任务」
+  /// 而不是「取消排队」：`preparing` 的任务并没有在排队，只是还没轮到它开始。
+  bool get _cancelable => isPendingJob(widget.job);
 
   /// 删除会连带清掉服务端的源文件与产物，先让用户确认一次。
   Future<void> _delete() async {
+    // 点下按钮那一刻任务还没开跑：文案、以及下面失败后要不要补刷，都看它。
+    final cancelable = _cancelable;
     final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showAppConfirmDialog(
       context,
-      title: '删除任务',
-      message: '将同时删除源文件与全部译文产物，该操作不可撤销。',
+      title: cancelable ? '取消任务' : '删除任务',
+      message: cancelable
+          ? '将取消尚未开始的任务并删除已上传的源文件，该操作不可撤销。'
+          : '将同时删除源文件与全部译文产物，该操作不可撤销。',
       detail: widget.job.filename,
-      icon: Icons.delete_outline,
-      confirmLabel: '删除',
+      icon: cancelable ? Icons.close : Icons.delete_outline,
+      confirmLabel: cancelable ? '取消任务' : '删除',
       destructive: true,
     );
     if (!confirmed || !mounted) {
@@ -348,11 +392,20 @@ class _JobCardState extends State<_JobCard> {
       await widget.api.deleteJob(widget.job.jobId);
       await widget.onRefresh();
       if (mounted) {
-        messenger.showSnackBar(const SnackBar(content: Text('任务已删除。')));
+        messenger.showSnackBar(
+          SnackBar(content: Text(cancelable ? '任务已取消。' : '任务已删除。')),
+        );
       }
     } catch (error) {
       if (mounted) {
         messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
+      }
+      if (cancelable) {
+        // 还没开跑的任务多半是正好在确认框和请求之间开跑了（后端答「还在处理
+        // 中」）。立刻拉一次列表，那个已经不成立的按钮当场消失，不用等下一
+        // 轮轮询。这次刷新自己失败了也不能盖掉上面那条真正的错误。
+        // 其它状态的失败（连不上服务之类）补刷只会再失败一次，不值当。
+        unawaited(widget.onRefresh().catchError((_) {}));
       }
     } finally {
       // 刷新后本卡片可能已经被移除，mounted 判断不能省。

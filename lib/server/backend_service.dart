@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
+import '../settings/task_concurrency.dart';
 import 'runtime_installer.dart';
 import 'runtime_layout.dart';
 
@@ -20,14 +21,23 @@ enum BackendPhase { probing, installing, launching, waiting, ready, failed }
 
 /// 内置服务子进程的生命周期管理。
 class BackendService extends ChangeNotifier {
-  BackendService({required ApiClient api, RuntimeInstaller? installer})
-    : _installer = installer ?? RuntimeInstaller(),
-      // ignore: prefer_initializing_formals — 具名参数不能用私有字段名
-      _api = api;
+  BackendService({
+    required ApiClient api,
+    RuntimeInstaller? installer,
+    int Function()? maxConcurrentTasks,
+  }) : _installer = installer ?? RuntimeInstaller(),
+       _maxConcurrentTasks =
+           maxConcurrentTasks ?? (() => kDefaultMaxConcurrentTasks),
+       // ignore: prefer_initializing_formals — 具名参数不能用私有字段名
+       _api = api;
 
 
   final ApiClient _api;
   final RuntimeInstaller _installer;
+
+  /// 同时执行的任务数上限，spawn 的那一刻现取 —— 用户可能在服务失败重试之前
+  /// 刚在设置页改过，取回调而不是取值就是为了拿到最新的那个。
+  final int Function() _maxConcurrentTasks;
 
   BackendPhase _phase = BackendPhase.probing;
   String _message = '正在检查服务…';
@@ -185,6 +195,9 @@ class BackendService extends ChangeNotifier {
       'TYPST_PACKAGE_PATH': layout.packagesDir,
       'TYPST_BIN': layout.typstExe,
       'APP_API_TOKEN': token,
+      // 服务端据此建一个容量固定的信号量：超出的任务停在 queued 上排队，
+      // 轮到了自动开始。容量在进程启动时就定死了，所以设置页改完要重启才生效。
+      'APP_MAX_CONCURRENT_TASKS': '${_maxConcurrentTasks()}',
     };
     // Exclude the token from diagnostic output to avoid leaking it.
     _detail =

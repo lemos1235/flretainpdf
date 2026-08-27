@@ -18,6 +18,7 @@ class AppConfig {
     required this.tableRecognitionBaseUrl,
     required this.tableRecognitionFlavor,
     required this.mineruBaseUrl,
+    required this.maxConcurrentTasks,
   });
 
   final String translationDefaultTargetLanguage;
@@ -26,6 +27,11 @@ class AppConfig {
   final String tableRecognitionBaseUrl;
   final String tableRecognitionFlavor;
   final String mineruBaseUrl;
+
+  /// 服务进程**当前**生效的同时执行任务数上限。它是启动时由环境变量定死的，
+  /// 所以设置页拿它和本地存的值比对，不一样就提示「重启后生效」。
+  /// 老版本服务不返回这个字段，那时是 0，按「不知道」处理。
+  final int maxConcurrentTasks;
 
   factory AppConfig.fromJson(Map<String, dynamic> json) {
     return AppConfig(
@@ -37,6 +43,9 @@ class AppConfig {
       tableRecognitionBaseUrl: _string(json['table_recognition_base_url']),
       tableRecognitionFlavor: _string(json['table_recognition_flavor']),
       mineruBaseUrl: _string(json['mineru_base_url']),
+      maxConcurrentTasks: json['max_concurrent_tasks'] is num
+          ? (json['max_concurrent_tasks'] as num).toInt()
+          : 0,
     );
   }
 }
