@@ -14,18 +14,9 @@ import '../widgets/status_text.dart';
 import 'job_settings.dart';
 
 /// 表单里需要跨次启动记住的字段。模型配置和 MinerU 的地址/Token 已经挪到
-/// 设置页，由 `AppSettings` 自己存（v6 → v7 就是为此拆的）。
-const _configFields = [
-  'translation_target_language',
-  'pages',
-  'skip_pages',
-  'table_recognition_base_url',
-  'table_recognition_flavor',
-  'extract_backend',
-  'formula_recognition_enabled',
-  'table_recognition_enabled',
-  'ocr_enabled',
-];
+/// 设置页，由 `AppSettings` 自己存（v6 → v7 就是为此拆的）。字段名清单和
+/// createJob / retryJob 用的是同一份（见 `jobSettingsFieldKeys`），不再重复写。
+const _configFields = jobSettingsFieldKeys;
 /// 三个识别开关按 'true'/'false' 存成字符串，和其它字段共用一套读写。
 const _storageKey = 'retainpdf-rs.form-config.v7';
 
@@ -43,10 +34,10 @@ class JobFormSection extends StatefulWidget {
   final Future<void> Function() onJobCreated;
 
   @override
-  State<JobFormSection> createState() => _JobFormSectionState();
+  State<JobFormSection> createState() => JobFormSectionState();
 }
 
-class _JobFormSectionState extends State<JobFormSection> {
+class JobFormSectionState extends State<JobFormSection> {
   final _settings = JobSettingsController();
   SharedPreferences? _prefs;
   String? _filePath;
@@ -262,6 +253,23 @@ class _JobFormSectionState extends State<JobFormSection> {
         setState(() => _submitting = false);
       }
     }
+  }
+
+  /// 供失败任务卡片的「重试」按钮读取：当前表单里的最新参数（文档相关 +
+  /// 模型/MinerU 接入信息），和点一次「开始翻译」会发送的完全一样，
+  /// 包括页码格式校验 —— 和 [_submit] 一样，非法页码不会被发给后端。
+  /// 重试请求发到原任务的 `/retry`，服务端会拿源文件的服务端副本重新跑一遍，
+  /// 不需要、也不会用到本地文件路径。
+  Map<String, dynamic> buildRetryFields() {
+    final pagesError = _settings.validatePages();
+    if (pagesError.isNotEmpty) {
+      throw Exception(pagesError);
+    }
+    final appSettings = AppSettingsScope.of(context);
+    return {
+      ..._settings.toRetryFields(),
+      ...appSettings.toRetryFields(),
+    };
   }
 
   void _setStatus(String message, {bool isError = false}) {

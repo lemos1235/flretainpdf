@@ -12,6 +12,21 @@ import 'page_selection.dart';
 const _translationExpandedKey = 'retainpdf-rs.section.translation-expanded';
 const _advancedExpandedKey = 'retainpdf-rs.section.advanced-expanded';
 
+/// 「文档相关」这组参数的字段名清单：创建任务的 multipart 字段、重试接口的
+/// JSON 字段、表单本地持久化（job_form_section.dart 的 `_configFields`）都是
+/// 同一份字段，共用这份清单，别再各处各写一遍。
+const jobSettingsFieldKeys = [
+  'translation_target_language',
+  'pages',
+  'skip_pages',
+  'table_recognition_base_url',
+  'table_recognition_flavor',
+  'extract_backend',
+  'formula_recognition_enabled',
+  'table_recognition_enabled',
+  'ocr_enabled',
+];
+
 /// 创建任务表单里和单个文档相关的那组参数：字段状态和它们的渲染抽在这里。
 ///
 /// 只管和单个文档相关的参数；模型接入信息和 MinerU 的地址/Token 属于全局配置，
@@ -56,28 +71,48 @@ class JobSettingsController {
     return validatePageSelection(skipPages.text, '跳过页码');
   }
 
-  /// 创建任务用的 multipart 字段。复刻 HTML 表单语义：勾上的 checkbox 发
-  /// "on"，没勾的字段完全不出现在请求里。
-  Map<String, String> toMultipartFields() {
-    final fields = <String, String>{
+  /// 单一数据源：[toMultipartFields] 和 [toRetryFields] 都从这里派生，
+  /// 不再各自维护一份字段清单。键必须和 [jobSettingsFieldKeys] 完全对应，
+  /// 下面的断言在测试/调试构建里会盯着这一点，防止新增字段时漏改。
+  Map<String, Object> get _fieldValues {
+    final values = <String, Object>{
       'translation_target_language': targetLanguage.text.trim(),
       'pages': pages.text.trim(),
       'skip_pages': skipPages.text.trim(),
       'extract_backend': extractBackend,
       'table_recognition_base_url': tableRecognitionBaseUrl.text.trim(),
       'table_recognition_flavor': tableRecognitionFlavor,
+      'formula_recognition_enabled': formulaRecognitionEnabled,
+      'table_recognition_enabled': tableRecognitionEnabled,
+      'ocr_enabled': ocrEnabled,
     };
-    if (formulaRecognitionEnabled) {
-      fields['formula_recognition_enabled'] = 'on';
-    }
-    if (tableRecognitionEnabled) {
-      fields['table_recognition_enabled'] = 'on';
-    }
-    if (ocrEnabled) {
-      fields['ocr_enabled'] = 'on';
-    }
+    assert(
+      values.length == jobSettingsFieldKeys.length &&
+          jobSettingsFieldKeys.every(values.containsKey),
+      '_fieldValues 的键和 jobSettingsFieldKeys 没对齐',
+    );
+    return values;
+  }
+
+  /// 创建任务用的 multipart 字段。复刻 HTML 表单语义：勾上的 checkbox 发
+  /// "on"，没勾的字段完全不出现在请求里。
+  Map<String, String> toMultipartFields() {
+    final fields = <String, String>{};
+    _fieldValues.forEach((key, value) {
+      if (value is bool) {
+        if (value) {
+          fields[key] = 'on';
+        }
+      } else {
+        fields[key] = value as String;
+      }
+    });
     return fields;
   }
+
+  /// 重试接口用的 JSON 字段：同一组参数，但布尔值发真正的 JSON 布尔，
+  /// 不是 multipart 表单那套「勾上发 'on'，没勾就不出现」的语义。
+  Map<String, dynamic> toRetryFields() => Map.of(_fieldValues);
 
   void dispose() {
     for (final controller in _all) {

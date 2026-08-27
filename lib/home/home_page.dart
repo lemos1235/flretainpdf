@@ -20,6 +20,7 @@ class _HomePageState extends State<HomePage> {
   Timer? _pollTimer;
   List<JobSummary> _jobs = const [];
   String _listError = '';
+  final _formKey = GlobalKey<JobFormSectionState>();
 
   @override
   void initState() {
@@ -54,6 +55,15 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 在原任务上重试：源文件用服务端保存的那份，参数取当前表单的最新值。
+  /// 服务端把任务请求和源文件都落了盘，应用重启、任务被打断也不影响重试，
+  /// 所以这里不需要任何本地记忆。
+  Future<void> _retryJob(JobSummary job) async {
+    final fields = _formKey.currentState?.buildRetryFields() ?? const {};
+    await _api.retryJob(job.jobId, fields);
+    await _refreshJobs();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -67,7 +77,11 @@ class _HomePageState extends State<HomePage> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(14, 14, 7, 14),
             children: [
-              JobFormSection(api: _api, onJobCreated: _refreshJobs),
+              JobFormSection(
+                key: _formKey,
+                api: _api,
+                onJobCreated: _refreshJobs,
+              ),
             ],
           ),
         ),
@@ -126,7 +140,12 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(height: 10),
               ],
-              JobListSection(api: _api, jobs: _jobs, onRefresh: _refreshJobs),
+              JobListSection(
+                api: _api,
+                jobs: _jobs,
+                onRefresh: _refreshJobs,
+                onRetry: _retryJob,
+              ),
             ],
           ),
         ),

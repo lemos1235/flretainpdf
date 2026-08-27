@@ -57,7 +57,7 @@ String formatJobMessage(JobSummary job) {
     'extracting': '正在分析页面结构并提取文本。',
     'translating': '正在批量翻译文档内容。',
     'rendering': '正在生成纯译文 PDF。',
-    'completed': '全部阶段已完成，可下载纯译文 PDF。',
+    'completed': '全部阶段已完成，可下载译文 PDF。',
     'failed': '任务执行失败，请查看错误信息。',
   };
   return mapping[job.status] ?? '任务状态更新中。';

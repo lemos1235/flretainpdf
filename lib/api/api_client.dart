@@ -169,6 +169,21 @@ class ApiClient {
     return _string(payload['job_id']);
   }
 
+  /// 让服务端在原任务上重新执行一遍（同一个 job_id，源文件用服务端保存的
+  /// 那份，不需要本地文件）。[overrides] 用当前表单的最新参数覆盖任务原本
+  /// 保存的请求参数，效果等同于直接创建一个新任务，但不占用新的 job_id。
+  Future<JobSummary> retryJob(
+    String jobId,
+    Map<String, dynamic> overrides,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/jobs/${Uri.encodeComponent(jobId)}/retry'),
+      headers: {..._authHeaders, 'Content-Type': 'application/json'},
+      body: jsonEncode(overrides),
+    );
+    return JobSummary.fromJson(_decodeObject(response, '重试任务失败'));
+  }
+
   /// 删除任务连同它在服务端的源文件与产物。后端对进行中的任务会拒绝，
   /// 界面上也只给已完成 / 失败的任务放按钮。成功时可能是 204 空 body，
   /// 所以这里只校验状态码，不解析返回。

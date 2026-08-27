@@ -199,6 +199,10 @@ class AppSettings extends ChangeNotifier {
     'mineru_token': mineruToken.text.trim(),
   };
 
+  /// 重试接口用的 JSON 字段，字段名和值与 [toMultipartFields] 一致，
+  /// 只是给 JSON body 用而不是 multipart 表单。
+  Map<String, dynamic> toRetryFields() => toMultipartFields();
+
   @override
   void dispose() {
     for (final controller in [

@@ -20,7 +20,11 @@ JobSummary _job({required String status, String message = ''}) {
   );
 }
 
-Future<void> _pumpList(WidgetTester tester, JobSummary job) async {
+Future<void> _pumpList(
+  WidgetTester tester,
+  JobSummary job, {
+  Future<void> Function(JobSummary job)? onRetry,
+}) async {
   await tester.binding.setSurfaceSize(const Size(900, 1200));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
@@ -36,6 +40,7 @@ Future<void> _pumpList(WidgetTester tester, JobSummary job) async {
             ),
             jobs: [job],
             onRefresh: () async {},
+            onRetry: onRetry ?? (_) async {},
           ),
         ),
       ),
@@ -71,5 +76,29 @@ void main() {
 
     expect(find.text('取消任务'), findsNothing);
     expect(find.text('删除任务'), findsNothing);
+  });
+
+  testWidgets('失败的任务：显示重试按钮', (tester) async {
+    await _pumpList(tester, _job(status: 'failed'));
+
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.text('删除任务'), findsOneWidget);
+  });
+
+  testWidgets('重试失败时把错误显示在卡片上，而不是静默吞掉', (tester) async {
+    await _pumpList(
+      tester,
+      _job(status: 'failed'),
+      onRetry: (_) async {
+        throw Exception('页码格式不对');
+      },
+    );
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('页码格式不对'), findsOneWidget);
+    // 按钮状态要复位，不能卡在「正在重试…」。
+    expect(find.text('重试'), findsOneWidget);
   });
 }

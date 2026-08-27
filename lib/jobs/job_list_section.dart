@@ -7,6 +7,7 @@ import '../api/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_panel.dart';
 import '../widgets/confirm_dialog.dart';
+import '../widgets/status_text.dart';
 import 'job_status.dart';
 
 class JobListSection extends StatelessWidget {
@@ -15,11 +16,16 @@ class JobListSection extends StatelessWidget {
     required this.api,
     required this.jobs,
     required this.onRefresh,
+    required this.onRetry,
   });
 
   final ApiClient api;
   final List<JobSummary> jobs;
   final Future<void> Function() onRefresh;
+
+  /// 在原任务上重新执行一次，参数取当前表单最新值；源文件用服务端保存的
+  /// 那份，与本地是否还留着原文件无关。
+  final Future<void> Function(JobSummary job) onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -125,6 +131,7 @@ class JobListSection extends StatelessWidget {
                       api: api,
                       job: jobs[i],
                       onRefresh: onRefresh,
+                      onRetry: onRetry,
                     ),
                   ),
               ],
@@ -138,11 +145,13 @@ class _JobCard extends StatefulWidget {
     required this.api,
     required this.job,
     required this.onRefresh,
+    required this.onRetry,
   });
 
   final ApiClient api;
   final JobSummary job;
   final Future<void> Function() onRefresh;
+  final Future<void> Function(JobSummary job) onRetry;
 
   @override
   State<_JobCard> createState() => _JobCardState();
@@ -152,6 +161,8 @@ class _JobCardState extends State<_JobCard> {
   bool _stepsExpanded = false;
   bool _downloading = false;
   bool _deleting = false;
+  bool _retrying = false;
+  String? _retryError;
 
   @override
   Widget build(BuildContext context) {
@@ -299,10 +310,33 @@ class _JobCardState extends State<_JobCard> {
 
           // 操作按钮。跑完的任务能删，还没开跑的能撤（后端把删除待执行
           // 任务当取消处理）；正在跑的后端会拒绝，按钮就别出现了。
-          if (job.translatedPdfUrl.isNotEmpty || _deletable) ...[
+          if (job.translatedPdfUrl.isNotEmpty || _retryable || _deletable) ...[
             const SizedBox(height: 10),
             Row(
               children: [
+                if (_retryable) ...[
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: app.accentSubtle,
+                      foregroundColor: app.accentText,
+                      side: BorderSide(color: app.accentBorder),
+                      shape: const StadiumBorder(),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                    ),
+                    icon: _retrying
+                        ? const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 13),
+                    onPressed: _retrying ? null : _retry,
+                    label: Text(_retrying ? '正在重试…' : '重试'),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (job.translatedPdfUrl.isNotEmpty)
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
@@ -316,10 +350,11 @@ class _JobCardState extends State<_JobCard> {
                     ),
                     icon: const Icon(Icons.download, size: 13),
                     onPressed: _downloading ? null : _download,
-                    label: const Text('下载纯译文 PDF'),
+                    label: const Text('下载译文 PDF'),
                   ),
                 if (_deletable) ...[
-                  if (job.translatedPdfUrl.isNotEmpty) const SizedBox(width: 8),
+                  if (job.translatedPdfUrl.isNotEmpty && !_retryable)
+                    const SizedBox(width: 8),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       backgroundColor: theme.colorScheme.surface,
@@ -352,6 +387,10 @@ class _JobCardState extends State<_JobCard> {
                 ],
               ],
             ),
+            if (_retryError case final error?) ...[
+              const SizedBox(height: 6),
+              StatusText(message: error, isError: true),
+            ],
           ],
         ],
       ),
@@ -367,6 +406,30 @@ class _JobCardState extends State<_JobCard> {
   /// 还没开跑的任务删掉就是「取消」，按钮和提示都换个说法。文案说「取消任务」
   /// 而不是「取消排队」：`preparing` 的任务并没有在排队，只是还没轮到它开始。
   bool get _cancelable => isPendingJob(widget.job);
+
+  /// 失败的任务都能重试：源文件与原始参数都由服务端保存着。
+  bool get _retryable => widget.job.status == 'failed';
+
+  /// 重试即在原任务上重新执行，源文件用服务端保存的那份，参数用当前表单
+  /// 的最新值 —— job_id 不变，不会多出一个新任务。
+  Future<void> _retry() async {
+    setState(() {
+      _retrying = true;
+      _retryError = null;
+    });
+    try {
+      await widget.onRetry(widget.job);
+      await widget.onRefresh();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _retryError = describeError(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _retrying = false);
+      }
+    }
+  }
 
   /// 删除会连带清掉服务端的源文件与产物，先让用户确认一次。
   Future<void> _delete() async {
