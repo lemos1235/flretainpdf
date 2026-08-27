@@ -236,64 +236,65 @@ class _JobCardState extends State<_JobCard> {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          // 进度条与步骤：已完成的任务不必再看这些过程信息，直接省掉。
+          if (job.status != 'completed') ...[
+            const SizedBox(height: 10),
+            _Progress(job: job, progress: progress),
+            const SizedBox(height: 8),
 
-          // 进度条
-          _Progress(job: job, progress: progress),
-          const SizedBox(height: 8),
-
-          // 步骤提示（紧凑单行 + 点击展开）
-          InkWell(
-            onTap: () => setState(() => _stepsExpanded = !_stepsExpanded),
-            borderRadius: BorderRadius.circular(6),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Icon(
-                    _stepsExpanded
-                        ? Icons.keyboard_arrow_down
-                        : Icons.keyboard_arrow_right,
-                    size: 16,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      formatJobMessage(job),
-                      maxLines: _stepsExpanded ? 5 : 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 12,
+            // 步骤提示（紧凑单行 + 点击展开）
+            InkWell(
+              onTap: () => setState(() => _stepsExpanded = !_stepsExpanded),
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _stepsExpanded
+                          ? Icons.keyboard_arrow_down
+                          : Icons.keyboard_arrow_right,
+                      size: 16,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        formatJobMessage(job),
+                        maxLines: _stepsExpanded ? 5 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
 
-          // 展开的步骤列表
-          if (_stepsExpanded) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainer,
-                borderRadius: BorderRadius.circular(8),
+            // 展开的步骤列表
+            if (_stepsExpanded) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    for (var index = 0; index < jobSteps.length; index++)
+                      _Step(
+                        step: jobSteps[index],
+                        state: resolveStepState(job, index, activeStepIndex),
+                      ),
+                  ],
+                ),
               ),
-              child: Column(
-                children: [
-                  for (var index = 0; index < jobSteps.length; index++)
-                    _Step(
-                      step: jobSteps[index],
-                      state: resolveStepState(job, index, activeStepIndex),
-                    ),
-                ],
-              ),
-            ),
+            ],
           ],
 
           // 操作按钮。跑完的任务能删，还没开跑的能撤（后端把删除待执行
@@ -303,43 +304,43 @@ class _JobCardState extends State<_JobCard> {
             Row(
               children: [
                 if (job.translatedPdfUrl.isNotEmpty)
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: app.accentSubtle,
+                      foregroundColor: app.accentText,
+                      side: BorderSide(color: app.accentBorder),
+                      shape: const StadiumBorder(),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
                     ),
-                    icon: _downloading
-                        ? const SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.download, size: 15),
+                    icon: const Icon(Icons.download, size: 13),
                     onPressed: _downloading ? null : _download,
-                    label: Text(_downloading ? '正在下载…' : '下载纯译文 PDF'),
+                    label: const Text('下载纯译文 PDF'),
                   ),
                 if (_deletable) ...[
                   if (job.translatedPdfUrl.isNotEmpty) const SizedBox(width: 8),
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                      side: BorderSide(
-                        color: theme.colorScheme.error.withValues(alpha: 0.4),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      backgroundColor: theme.colorScheme.surface,
+                      foregroundColor: theme.colorScheme.onSurfaceVariant,
+                      side: BorderSide(color: theme.dividerColor),
+                      shape: const StadiumBorder(),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
                     ),
                     icon: _deleting
                         ? const SizedBox(
-                            width: 15,
-                            height: 15,
+                            width: 13,
+                            height: 13,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : Icon(
                             _cancelable
                                 ? Icons.close
                                 : Icons.delete_outline,
-                            size: 15,
+                            size: 13,
                           ),
                     onPressed: _deleting ? null : _delete,
                     label: Text(
@@ -371,7 +372,6 @@ class _JobCardState extends State<_JobCard> {
   Future<void> _delete() async {
     // 点下按钮那一刻任务还没开跑：文案、以及下面失败后要不要补刷，都看它。
     final cancelable = _cancelable;
-    final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showAppConfirmDialog(
       context,
       title: cancelable ? '取消任务' : '删除任务',
@@ -391,15 +391,7 @@ class _JobCardState extends State<_JobCard> {
     try {
       await widget.api.deleteJob(widget.job.jobId);
       await widget.onRefresh();
-      if (mounted) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(cancelable ? '任务已取消。' : '任务已删除。')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
-      }
+    } catch (_) {
       if (cancelable) {
         // 还没开跑的任务多半是正好在确认框和请求之间开跑了（后端答「还在处理
         // 中」）。立刻拉一次列表，那个已经不成立的按钮当场消失，不用等下一
@@ -417,13 +409,12 @@ class _JobCardState extends State<_JobCard> {
 
   /// 先把产物下下来，再让系统的保存对话框决定落到哪儿。
   Future<void> _download() async {
-    final messenger = ScaffoldMessenger.of(context);
     setState(() => _downloading = true);
     try {
       final bytes = await widget.api.downloadArtifact(
         widget.job.translatedPdfUrl,
       );
-      final saved = await FilePicker.saveFile(
+      await FilePicker.saveFile(
         fileName: _suggestedFileName(widget.job),
         bytes: bytes,
         mimeType: 'application/pdf',
@@ -431,14 +422,6 @@ class _JobCardState extends State<_JobCard> {
         type: FileType.custom,
         allowedExtensions: const ['pdf'],
       );
-      if (!mounted || saved == null) {
-        return;
-      }
-      messenger.showSnackBar(const SnackBar(content: Text('已保存纯译文 PDF。')));
-    } catch (error) {
-      if (mounted) {
-        messenger.showSnackBar(SnackBar(content: Text(describeError(error))));
-      }
     } finally {
       if (mounted) {
         setState(() => _downloading = false);
