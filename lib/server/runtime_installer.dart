@@ -178,12 +178,11 @@ class RuntimeInstaller {
       sizes[entry.value] = bytes.length;
     }
 
-    File(
-      [tmp.path, RuntimeLayout.stampName].join(Platform.pathSeparator),
-    ).writeAsStringSync(
-      jsonEncode({'version': kRuntimeVersion, 'files': sizes}),
-      flush: true,
-    );
+    File([tmp.path, RuntimeLayout.stampName].join(Platform.pathSeparator))
+        .writeAsStringSync(
+          jsonEncode({'version': kRuntimeVersion, 'files': sizes}),
+          flush: true,
+        );
 
     if (layout.root.existsSync()) {
       layout.root.deleteSync(recursive: true);

@@ -86,11 +86,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         // 中间分隔线
-        VerticalDivider(
-          width: 1,
-          thickness: 1,
-          color: theme.dividerColor,
-        ),
+        VerticalDivider(width: 1, thickness: 1, color: theme.dividerColor),
         // 右栏：任务管理与进度中心
         Expanded(
           child: ListView(
@@ -153,4 +149,3 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
-

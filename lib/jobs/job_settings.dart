@@ -464,7 +464,9 @@ class _BackendChoice extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? app.accentSubtle : theme.colorScheme.surfaceContainer,
+          color: selected
+              ? app.accentSubtle
+              : theme.colorScheme.surfaceContainer,
           border: Border.all(
             color: selected ? app.accentBorder : theme.dividerColor,
             width: selected ? 1.2 : 1,
@@ -483,4 +485,3 @@ class _BackendChoice extends StatelessWidget {
     );
   }
 }
-

@@ -70,13 +70,9 @@ class FormSection extends StatelessWidget {
               ?trailing,
             ],
           ),
-          if (children.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            ...children,
-          ],
+          if (children.isNotEmpty) ...[const SizedBox(height: 14), ...children],
         ],
       ),
     );
   }
 }
-

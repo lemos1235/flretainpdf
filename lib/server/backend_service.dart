@@ -43,7 +43,6 @@ class BackendService extends ChangeNotifier {
        // ignore: prefer_initializing_formals — 具名参数不能用私有字段名
        _api = api;
 
-
   final ApiClient _api;
   final RuntimeInstaller _installer;
 
@@ -125,7 +124,8 @@ class BackendService extends ChangeNotifier {
     } on ProcessException catch (error) {
       _fail(
         '无法执行服务程序。',
-        detail: '${error.executable}\n${error.message}（errno ${error.errorCode}）',
+        detail:
+            '${error.executable}\n${error.message}（errno ${error.errorCode}）',
       );
     } catch (error) {
       _fail('启动服务时出错。', detail: '$error');
@@ -387,10 +387,7 @@ class BackendService extends ChangeNotifier {
       await Future<void>.delayed(_probeInterval);
     }
     await _stopProcess();
-    _fail(
-      '服务在 ${_readyTimeout.inSeconds} 秒内没有就绪。',
-      detail: _logTail(),
-    );
+    _fail('服务在 ${_readyTimeout.inSeconds} 秒内没有就绪。', detail: _logTail());
   }
 
   String _logTail() {
@@ -455,7 +452,8 @@ class BackendService extends ChangeNotifier {
 /// a localhost-only bearer token that changes every launch.
 String _generateToken() {
   final random = Random.secure();
-  return List.generate(24, (_) => random.nextInt(256))
-      .map((b) => b.toRadixString(16).padLeft(2, '0'))
-      .join();
+  return List.generate(
+    24,
+    (_) => random.nextInt(256),
+  ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }

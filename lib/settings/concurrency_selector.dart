@@ -96,11 +96,7 @@ class ConcurrencySelector extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 16,
-                  color: app.accentText,
-                ),
+                Icon(Icons.info_outline, size: 16, color: app.accentText),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(

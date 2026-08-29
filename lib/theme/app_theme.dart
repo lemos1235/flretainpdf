@@ -55,13 +55,12 @@ class AppTheme {
 
   static ThemeData _buildTheme(ColorScheme colorScheme) {
     final isDark = colorScheme.brightness == Brightness.dark;
-    final baseTextTheme = Typography.material2021(
-      platform: TargetPlatform.macOS,
-    ).black.apply(
-      fontFamilyFallback: _cjkFallbacks,
-      bodyColor: colorScheme.onSurface,
-      displayColor: colorScheme.onSurface,
-    );
+    final baseTextTheme =
+        Typography.material2021(platform: TargetPlatform.macOS).black.apply(
+          fontFamilyFallback: _cjkFallbacks,
+          bodyColor: colorScheme.onSurface,
+          displayColor: colorScheme.onSurface,
+        );
 
     return ThemeData(
       useMaterial3: true,
@@ -142,7 +141,10 @@ class AppTheme {
         isDense: true,
         filled: true,
         fillColor: colorScheme.surfaceContainer,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 10,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: colorScheme.outlineVariant),

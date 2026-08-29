@@ -29,9 +29,7 @@ class AppMenuBar extends StatelessWidget {
             'assets/images/logo.svg',
             width: 34,
             height: 34,
-            theme: SvgTheme(
-              currentColor: theme.colorScheme.primary,
-            ),
+            theme: SvgTheme(currentColor: theme.colorScheme.primary),
           ),
           const SizedBox(height: 24),
           _MenuButton(
@@ -116,18 +114,10 @@ class _MenuButtonState extends State<_MenuButton> {
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: Icon(
-              widget.icon,
-              size: 18,
-              color: foreground,
-            ),
+            child: Icon(widget.icon, size: 18, color: foreground),
           ),
         ),
       ),
     );
   }
 }
-
-
-
-

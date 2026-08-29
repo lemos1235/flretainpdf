@@ -10,7 +10,7 @@ import '../widgets/confirm_dialog.dart';
 import '../widgets/status_text.dart';
 import 'job_status.dart';
 
-class JobListSection extends StatelessWidget {
+class JobListSection extends StatefulWidget {
   const JobListSection({
     super.key,
     required this.api,
@@ -28,10 +28,21 @@ class JobListSection extends StatelessWidget {
   final Future<void> Function(JobSummary job) onRetry;
 
   @override
+  State<JobListSection> createState() => _JobListSectionState();
+}
+
+class _JobListSectionState extends State<JobListSection> {
+  bool _clearing = false;
+  String? _clearError;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final app = AppColors.of(context);
+    final jobs = widget.jobs;
     final waiting = jobs.where(isWaitingForSlot).length;
+    final finishedCount = jobs.where(_isFinishedJob).length;
+    final canClear = finishedCount > 0;
     return AppPanel(
       title: '任务列表',
       trailing: Row(
@@ -77,20 +88,33 @@ class JobListSection extends StatelessWidget {
             const SizedBox(width: 6),
           ],
           Semantics(
-            label: '刷新任务列表',
+            label: '清空任务列表',
             button: true,
             child: IconButton(
-              icon: const Icon(Icons.refresh, size: 16),
-              tooltip: '刷新任务列表',
-              onPressed: onRefresh,
+              icon: _clearing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_sweep_outlined, size: 16),
+              tooltip: canClear ? '清空任务列表' : '没有可清理的已结束任务',
+              onPressed: canClear && !_clearing ? _clearJobs : null,
               visualDensity: VisualDensity.compact,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             ),
           ),
         ],
       ),
-      child: jobs.isEmpty
-          ? Container(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_clearError case final error?) ...[
+            StatusText(message: error, isError: true),
+            const SizedBox(height: 10),
+          ],
+          if (jobs.isEmpty)
+            Container(
               padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
               alignment: Alignment.center,
               child: Column(
@@ -121,24 +145,61 @@ class JobListSection extends StatelessWidget {
                 ],
               ),
             )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < jobs.length; i++)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: i < jobs.length - 1 ? 10 : 0),
-                    child: _JobCard(
-                      api: api,
-                      job: jobs[i],
-                      onRefresh: onRefresh,
-                      onRetry: onRetry,
-                    ),
-                  ),
-              ],
-            ),
+          else
+            for (var i = 0; i < jobs.length; i++)
+              Padding(
+                padding: EdgeInsets.only(bottom: i < jobs.length - 1 ? 10 : 0),
+                child: _JobCard(
+                  api: widget.api,
+                  job: jobs[i],
+                  onRefresh: widget.onRefresh,
+                  onRetry: widget.onRetry,
+                ),
+              ),
+        ],
+      ),
     );
   }
+
+  Future<void> _clearJobs() async {
+    final finishedCount = widget.jobs.where(_isFinishedJob).length;
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: '清空任务列表',
+      message: '将清理所有已结束任务，并删除相应的源文件与译文产物。排队中和正在处理的任务会保留，该操作不可撤销。',
+      detail: '当前共 $finishedCount 个已结束任务',
+      icon: Icons.delete_sweep_outlined,
+      confirmLabel: '清空',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _clearing = true;
+      _clearError = null;
+    });
+    try {
+      await widget.api.clearJobs();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _clearError = describeError(error));
+      }
+    } finally {
+      await widget.onRefresh().catchError((_) {});
+      if (mounted) {
+        setState(() => _clearing = false);
+      }
+    }
+  }
 }
+
+bool _isFinishedJob(JobSummary job) =>
+    job.status == 'completed' || job.status == 'failed';
+
+bool _isClearableJob(JobSummary job) =>
+    _isFinishedJob(job) || isPendingJob(job);
 
 class _JobCard extends StatefulWidget {
   const _JobCard({
@@ -227,7 +288,9 @@ class _JobCardState extends State<_JobCard> {
                   border: Border.all(
                     color: switch (job.status) {
                       'completed' => app.success.withValues(alpha: 0.3),
-                      'failed' => theme.colorScheme.error.withValues(alpha: 0.3),
+                      'failed' => theme.colorScheme.error.withValues(
+                        alpha: 0.3,
+                      ),
                       _ => theme.dividerColor,
                     },
                   ),
@@ -290,7 +353,10 @@ class _JobCardState extends State<_JobCard> {
             if (_stepsExpanded) ...[
               const SizedBox(height: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(8),
@@ -322,8 +388,14 @@ class _JobCardState extends State<_JobCard> {
                       side: BorderSide(color: app.accentBorder),
                       shape: const StadiumBorder(),
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     icon: _retrying
                         ? const SizedBox(
@@ -345,8 +417,14 @@ class _JobCardState extends State<_JobCard> {
                       side: BorderSide(color: app.accentBorder),
                       shape: const StadiumBorder(),
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     icon: const Icon(Icons.download, size: 13),
                     onPressed: _downloading ? null : _download,
@@ -362,8 +440,14 @@ class _JobCardState extends State<_JobCard> {
                       side: BorderSide(color: theme.dividerColor),
                       shape: const StadiumBorder(),
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      textStyle: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     icon: _deleting
                         ? const SizedBox(
@@ -372,9 +456,7 @@ class _JobCardState extends State<_JobCard> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : Icon(
-                            _cancelable
-                                ? Icons.close
-                                : Icons.delete_outline,
+                            _cancelable ? Icons.close : Icons.delete_outline,
                             size: 13,
                           ),
                     onPressed: _deleting ? null : _delete,
@@ -398,10 +480,7 @@ class _JobCardState extends State<_JobCard> {
   }
 
   /// 跑完（成功或失败）或还没开跑的任务能删，与 webapp 的按钮显示条件一致。
-  bool get _deletable =>
-      widget.job.status == 'completed' ||
-      widget.job.status == 'failed' ||
-      isPendingJob(widget.job);
+  bool get _deletable => _isClearableJob(widget.job);
 
   /// 还没开跑的任务删掉就是「取消」，按钮和提示都换个说法。文案说「取消任务」
   /// 而不是「取消排队」：`preparing` 的任务并没有在排队，只是还没轮到它开始。
@@ -676,9 +755,7 @@ class _StepState extends State<_Step> with SingleTickerProviderStateMixin {
 }
 
 String _formatMeta(JobSummary job) {
-  final buffer = StringBuffer(
-    'ID: ${job.jobId} · 目标: ${job.targetLanguage}',
-  );
+  final buffer = StringBuffer('ID: ${job.jobId} · 目标: ${job.targetLanguage}');
   if (job.pages.isNotEmpty) {
     buffer.write(' · 页码: ${job.pages}');
   }
@@ -690,4 +767,3 @@ String _formatMeta(JobSummary job) {
   }
   return buffer.toString();
 }
-

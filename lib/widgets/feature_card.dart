@@ -147,10 +147,7 @@ class FeatureCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                AppSwitch(
-                  value: value,
-                  onChanged: enabled ? onChanged : null,
-                ),
+                AppSwitch(value: value, onChanged: enabled ? onChanged : null),
               ],
             ),
           ),
@@ -170,5 +167,3 @@ class FeatureCard extends StatelessWidget {
     return card;
   }
 }
-
-

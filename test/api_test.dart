@@ -167,6 +167,28 @@ void main() {
     );
   });
 
+  test('清空任务调用 cleanup 接口并要求不保留历史任务', () async {
+    final api = _testApi(
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.toString(), '$baseUrl/api/jobs/cleanup');
+        expect(request.headers['X-RetainPDF-Token'], 'test-token');
+        expect(request.headers['content-type'], 'application/json');
+        expect(jsonDecode(request.body), {'keep_latest': 0});
+        return http.Response(
+          jsonEncode({
+            'removed_count': 2,
+            'removed': ['j1', 'j2'],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    expect(await api.clearJobs(), 2);
+  });
+
   test('删除任务发 DELETE 到带 id 的地址', () async {
     var called = 0;
     final api = _testApi(

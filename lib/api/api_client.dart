@@ -186,6 +186,22 @@ class ApiClient {
     return JobSummary.fromJson(_decodeObject(response, '重试任务失败'));
   }
 
+  /// 清空可清理的任务及其源文件与产物。清理接口要求至少提供一个筛选条件，
+  /// `keep_latest: 0` 表示不保留任何符合服务端清理条件的历史任务。
+  Future<int> clearJobs() async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/jobs/cleanup'),
+      headers: {..._authHeaders, 'Content-Type': 'application/json'},
+      body: jsonEncode({'keep_latest': 0}),
+    );
+    final payload = _decodeObject(response, '清空任务列表失败');
+    final removedCount = payload['removed_count'];
+    if (removedCount is! num) {
+      throw Exception('清空任务列表失败：返回格式不正确');
+    }
+    return removedCount.toInt();
+  }
+
   /// 删除任务连同它在服务端的源文件与产物。后端对进行中的任务会拒绝，
   /// 界面上也只给已完成 / 失败的任务放按钮。成功时可能是 204 空 body，
   /// 所以这里只校验状态码，不解析返回。

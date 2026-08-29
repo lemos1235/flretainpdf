@@ -4,7 +4,12 @@ import 'package:flretainpdf/jobs/page_selection.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-JobSummary _job({String status = 'queued', String step = '', String message = '', int? pageCount}) {
+JobSummary _job({
+  String status = 'queued',
+  String step = '',
+  String message = '',
+  int? pageCount,
+}) {
   return JobSummary(
     jobId: 'job-1',
     filename: 'a.pdf',
@@ -53,7 +58,11 @@ void main() {
   test('进度百分比覆盖各状态', () {
     expect(summarizeJobProgress(_job(status: 'completed')).percent, 100);
     expect(summarizeJobProgress(_job(status: 'failed')).value, '执行失败');
-    expect(summarizeJobProgress(_job(status: 'translating', message: '已完成 5/10 个单元')).value, '5/10 个单元');
+    expect(
+      summarizeJobProgress(_job(status: 'translating', message: '已完成 5/10 个单元'))
+          .value,
+      '5/10 个单元',
+    );
   });
 
   test('排队等槽位的任务单独展示，进度条不虚假前进', () {
@@ -76,7 +85,9 @@ void main() {
 
   test('步骤状态跟随 step 字段推进', () {
     final job = _job(status: 'translating', step: 'translating');
-    final activeIndex = jobSteps.indexWhere((step) => step.id == resolveActiveStepId(job));
+    final activeIndex = jobSteps.indexWhere(
+      (step) => step.id == resolveActiveStepId(job),
+    );
     expect(activeIndex, 2);
     expect(resolveStepState(job, 0, activeIndex), JobStepState.done);
     expect(resolveStepState(job, 2, activeIndex), JobStepState.active);

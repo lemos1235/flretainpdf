@@ -34,7 +34,10 @@ class _AppShellState extends State<AppShell> {
             child: IndexedStack(
               index: _section.index,
               sizing: StackFit.expand,
-              children: [HomePage(api: widget.api), const SettingsPage()],
+              children: [
+                HomePage(api: widget.api),
+                const SettingsPage(),
+              ],
             ),
           ),
         ],

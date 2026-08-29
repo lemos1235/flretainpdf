@@ -178,5 +178,3 @@ class _SecretFieldState extends State<SecretField> {
     );
   }
 }
-
-

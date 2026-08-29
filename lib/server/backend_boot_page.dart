@@ -20,7 +20,9 @@ class BackendBootPage extends StatelessWidget {
     if (!backend.hasFailed) {
       return const Scaffold(body: SizedBox.expand());
     }
-    return Scaffold(body: Center(child: _BackendFailure(backend: backend)));
+    return Scaffold(
+      body: Center(child: _BackendFailure(backend: backend)),
+    );
   }
 }
 

@@ -56,10 +56,7 @@ void main() {
 
     settings.maxConcurrentTasks = 6;
     expect(settings.maxConcurrentTasks, 6);
-    expect(
-      readMaxConcurrentTasks(await SharedPreferences.getInstance()),
-      6,
-    );
+    expect(readMaxConcurrentTasks(await SharedPreferences.getInstance()), 6);
 
     // 超出区间的值不写进去，存的还是上一个合法值。
     settings.maxConcurrentTasks = kMaxMaxConcurrentTasks + 5;

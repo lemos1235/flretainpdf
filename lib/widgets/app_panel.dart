@@ -54,10 +54,7 @@ class AppPanel extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (trailing != null) ...[
-                  const SizedBox(width: 8),
-                  trailing!,
-                ],
+                if (trailing != null) ...[const SizedBox(width: 8), trailing!],
               ],
             ),
             const SizedBox(height: 14),
@@ -68,4 +65,3 @@ class AppPanel extends StatelessWidget {
     );
   }
 }
-

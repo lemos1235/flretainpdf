@@ -33,10 +33,12 @@ class AppConfirmDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = AppColors.of(context);
-    final accent =
-        destructive ? theme.colorScheme.error : theme.colorScheme.primary;
-    final badgeBackground =
-        destructive ? colors.dangerSubtle : colors.accentSubtle;
+    final accent = destructive
+        ? theme.colorScheme.error
+        : theme.colorScheme.primary;
+    final badgeBackground = destructive
+        ? colors.dangerSubtle
+        : colors.accentSubtle;
 
     // 窗口可以从 740 宽拉到全屏，固定宽度在大屏上会显得过分袖珍；
     // 让宽度跟着窗口走，间距同步放松一点，字号与图标保持不变。

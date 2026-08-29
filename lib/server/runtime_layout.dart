@@ -11,7 +11,8 @@ const kServerAssetPrefix = 'assets/server/';
 
 /// 服务和 typst 的可执行文件名。除了拼路径，收僵尸进程时还要拿它跟系统里
 /// 真实的进程名比对，所以提到顶层共用一份。
-String get serverExeName => Platform.isWindows ? 'retainpdf-rs.exe' : 'retainpdf-rs';
+String get serverExeName =>
+    Platform.isWindows ? 'retainpdf-rs.exe' : 'retainpdf-rs';
 
 String get typstExeName => Platform.isWindows ? 'typst.exe' : 'typst';
 

@@ -12,7 +12,8 @@ import 'package:http/testing.dart';
 /// 永远说「装不上」的 installer：让 start() 在真正 spawn 子进程之前就停下来，
 /// 单测里不需要（也不该）拉起真的二进制。
 class _FailingInstaller extends RuntimeInstaller {
-  _FailingInstaller() : super(supportDirectory: () async => throw StateError('不该走到这里'));
+  _FailingInstaller()
+    : super(supportDirectory: () async => throw StateError('不该走到这里'));
 
   @override
   Future<RuntimeLayout> ensureInstalled({void Function(String)? onStep}) {
@@ -115,9 +116,8 @@ void main() {
     final envDump = '${support.path}${Platform.pathSeparator}env.txt';
     final binDir = Directory('${support.path}${Platform.pathSeparator}bin')
       ..createSync(recursive: true);
-    final exe = File(
-      '${binDir.path}${Platform.pathSeparator}$serverExeName',
-    )..writeAsStringSync('#!/bin/sh\nenv > "$envDump"\nsleep 30\n');
+    final exe = File('${binDir.path}${Platform.pathSeparator}$serverExeName')
+      ..writeAsStringSync('#!/bin/sh\nenv > "$envDump"\nsleep 30\n');
     Process.runSync('chmod', ['+x', exe.path]);
 
     final backend = BackendService(
