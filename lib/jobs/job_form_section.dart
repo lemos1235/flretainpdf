@@ -17,11 +17,49 @@ import 'job_settings.dart';
 /// 设置页，由 `AppSettings` 自己存（v6 → v7 就是为此拆的）。字段名清单和
 /// createJob / retryJob 用的是同一份（见 `jobSettingsFieldKeys`），不再重复写。
 const _configFields = jobSettingsFieldKeys;
+
 /// 三个识别开关按 'true'/'false' 存成字符串，和其它字段共用一套读写。
 const _storageKey = 'retainpdf-rs.form-config.v7';
 
 /// v6 里除了上面这些字段，还混着现在归设置页管的模型配置；这里只读自己那部分。
 const _legacyStorageKey = 'retainpdf-rs.form-config.v6';
+
+/// 文件选择器和拖放入口统一使用的本地 PDF 描述。
+///
+/// 桌面端上传依赖本地路径，因此路径也作为稳定去重键：同一个文件分批选择或
+/// 重复拖入时只保留第一次加入的那一项。
+@immutable
+class SelectedPdf {
+  const SelectedPdf({
+    required this.path,
+    required this.name,
+    required this.size,
+  });
+
+  final String path;
+  final String name;
+  final int size;
+}
+
+/// 把新文件追加到已有列表，只保留 PDF，并按本地路径去重、保持首次加入顺序。
+List<SelectedPdf> mergeSelectedPdfs(
+  Iterable<SelectedPdf> current,
+  Iterable<SelectedPdf> incoming,
+) {
+  final merged = <SelectedPdf>[];
+  final knownPaths = <String>{};
+  for (final file in [...current, ...incoming]) {
+    // 只有 Windows 把两种斜杠视为路径分隔符且通常不区分大小写；POSIX
+    // 允许文件名包含反斜杠，macOS 也可能挂载大小写敏感卷，不能按平台误合并。
+    final dedupeKey = Platform.isWindows
+        ? file.path.replaceAll('/', '\\').toLowerCase()
+        : file.path;
+    if (file.path.toLowerCase().endsWith('.pdf') && knownPaths.add(dedupeKey)) {
+      merged.add(file);
+    }
+  }
+  return merged;
+}
 
 class JobFormSection extends StatefulWidget {
   const JobFormSection({
@@ -40,9 +78,7 @@ class JobFormSection extends StatefulWidget {
 class JobFormSectionState extends State<JobFormSection> {
   final _settings = JobSettingsController();
   SharedPreferences? _prefs;
-  String? _filePath;
-  String? _fileName;
-  int? _fileSize;
+  List<SelectedPdf> _files = const [];
   bool _submitting = false;
   String _status = '';
   bool _statusIsError = false;
@@ -164,59 +200,100 @@ class JobFormSectionState extends State<JobFormSection> {
     }
   }
 
-  Future<void> _pickFile() async {
-    final picked = await FilePicker.pickFile(
+  Future<void> _pickFiles() async {
+    final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf'],
     );
-    final path = picked?.path;
-    if (picked == null || path == null) {
+    final files = await Future.wait(
+      picked
+          .where((file) => file.path != null)
+          .map(
+            (file) async => SelectedPdf(
+              path: file.path!,
+              name: file.name,
+              size: await file.length(),
+            ),
+          ),
+    );
+    if (!mounted || files.isEmpty) {
       return;
     }
-    final size = await picked.length();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _filePath = path;
-      _fileName = picked.name;
-      _fileSize = size;
-    });
+    addFiles(files);
   }
 
-  /// 拖进来的可能是多个文件或非 PDF，只认第一个 .pdf，其余忽略并提示。
+  /// 拖入的所有 PDF 都加入列表；非 PDF 会被忽略，整批都无效时才提示错误。
   Future<void> _acceptDroppedFiles(List<DropItem> items) async {
-    final pdf = items.where((item) => item.path.toLowerCase().endsWith('.pdf'));
-    if (pdf.isEmpty) {
+    final pdfItems = items.where(
+      (item) => item.path.toLowerCase().endsWith('.pdf'),
+    );
+    if (pdfItems.isEmpty) {
       _setStatus('只支持拖入 PDF 文件。', isError: true);
       return;
     }
-    final file = File(pdf.first.path);
-    final size = await file.length();
+    final files = <SelectedPdf>[];
+    for (final item in pdfItems) {
+      try {
+        final file = File(item.path);
+        if (await file.exists() &&
+            (await FileSystemEntity.type(item.path)) ==
+                FileSystemEntityType.file) {
+          files.add(
+            SelectedPdf(
+              path: file.path,
+              name: item.name,
+              size: await file.length(),
+            ),
+          );
+        }
+      } catch (_) {
+        // 忽略无法访问或无法读取大小的文件
+      }
+    }
     if (!mounted) {
       return;
     }
+    if (files.isEmpty) {
+      _setStatus('未能读取所选 PDF 文件。', isError: true);
+      return;
+    }
+    addFiles(files);
+  }
+
+  /// 公开给测试的统一追加入口；真实选择和拖放也都走这里，避免两套去重逻辑。
+  @visibleForTesting
+  void addFiles(Iterable<SelectedPdf> files) {
+    if (_submitting) {
+      return;
+    }
     setState(() {
-      _filePath = file.path;
-      _fileName = pdf.first.name;
-      _fileSize = size;
+      _files = mergeSelectedPdfs(_files, files);
       _status = '';
       _statusIsError = false;
     });
   }
 
-  void _clearFile() {
-    setState(() {
-      _filePath = null;
-      _fileName = null;
-      _fileSize = null;
-    });
+  @visibleForTesting
+  List<SelectedPdf> get selectedFiles => List.unmodifiable(_files);
+
+  void _removeFile(String path) {
+    if (_submitting) {
+      return;
+    }
+    setState(() => _files = _files.where((file) => file.path != path).toList());
+  }
+
+  void _clearFiles() {
+    if (_submitting) {
+      return;
+    }
+    setState(() => _files = const []);
   }
 
   Future<void> _submit() async {
     final appSettings = AppSettingsScope.of(context);
-    final filePath = _filePath;
-    if (filePath == null) {
+    final files = List<SelectedPdf>.of(_files);
+    if (files.isEmpty) {
       _setStatus('请先选择 PDF 文件。', isError: true);
       return;
     }
@@ -226,28 +303,58 @@ class JobFormSectionState extends State<JobFormSection> {
       return;
     }
 
-    setState(() => _submitting = true);
-    _setStatus('正在创建任务...');
+    // 整批任务共用提交开始时的参数快照，避免上传到一半时界面字段变化造成
+    // 同一批文件使用不同配置。
+    final fields = {
+      ..._settings.toMultipartFields(),
+      ...appSettings.toMultipartFields(),
+    };
+    final createdPaths = <String>{};
+    final failures = <String>[];
+    setState(() {
+      _submitting = true;
+      _status = '';
+      _statusIsError = false;
+    });
+
     try {
-      // 文档相关的参数来自本表单，模型/MinerU 的接入信息来自设置页。
-      final jobId = await widget.api.createJob(
-        filePath: filePath,
-        fields: {
-          ..._settings.toMultipartFields(),
-          ...appSettings.toMultipartFields(),
-        },
-      );
+      // 后端一次只接收一个文件，所以按选择顺序逐个创建；单个失败不阻断后续。
+      for (var index = 0; index < files.length; index++) {
+        final file = files[index];
+        if (!mounted) {
+          return;
+        }
+        _setStatus('正在创建任务 ${index + 1}/${files.length}：${file.name}…');
+        try {
+          final jobId = await widget.api.createJob(
+            filePath: file.path,
+            fields: fields,
+          );
+          createdPaths.add(file.path);
+          debugPrint('任务 $jobId 已创建，正在后台处理。');
+        } catch (error) {
+          failures.add('${file.name}：${describeError(error)}');
+        }
+      }
+
       if (!mounted) {
         return;
       }
-      debugPrint('任务 $jobId 已创建，正在后台处理。');
-       _setStatus('');
-      _clearFile();
+      setState(() {
+        _files = _files
+            .where((file) => !createdPaths.contains(file.path))
+            .toList();
+        if (failures.isEmpty) {
+          _status = '已创建 ${createdPaths.length} 个任务，正在后台处理。';
+          _statusIsError = false;
+        } else {
+          _status =
+              '成功创建 ${createdPaths.length} 个任务，'
+              '${failures.length} 个失败：${failures.join('；')}';
+          _statusIsError = true;
+        }
+      });
       await widget.onJobCreated();
-    } catch (error) {
-      if (mounted) {
-        _setStatus(describeError(error), isError: true);
-      }
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
@@ -266,10 +373,7 @@ class JobFormSectionState extends State<JobFormSection> {
       throw Exception(pagesError);
     }
     final appSettings = AppSettingsScope.of(context);
-    return {
-      ..._settings.toRetryFields(),
-      ...appSettings.toRetryFields(),
-    };
+    return {..._settings.toRetryFields(), ...appSettings.toRetryFields()};
   }
 
   void _setStatus(String message, {bool isError = false}) {
@@ -287,10 +391,11 @@ class JobFormSectionState extends State<JobFormSection> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _FileDropzone(
-            fileName: _fileName,
-            fileSize: _fileSize,
-            onPick: _pickFile,
-            onClear: _clearFile,
+            files: _files,
+            disabled: _submitting,
+            onPick: _pickFiles,
+            onRemove: _removeFile,
+            onClear: _clearFiles,
             onDropFiles: _acceptDroppedFiles,
           ),
           const SizedBox(height: 12),
@@ -317,20 +422,22 @@ class JobFormSectionState extends State<JobFormSection> {
   }
 }
 
-/// 对应 webapp 的 `.file-dropzone`：未选文件时是紧凑的点选/拖放区，
-/// 选中后收成一行文件信息（此时仍可拖入新文件替换）。
+/// 对应 webapp 的 `.file-dropzone`：空状态整块可点；已有文件后展示汇总、
+/// 可滚动列表和明确的“继续添加”入口，避免点列表时误弹文件选择器。
 class _FileDropzone extends StatefulWidget {
   const _FileDropzone({
-    required this.fileName,
-    required this.fileSize,
+    required this.files,
+    required this.disabled,
     required this.onPick,
+    required this.onRemove,
     required this.onClear,
     required this.onDropFiles,
   });
 
-  final String? fileName;
-  final int? fileSize;
+  final List<SelectedPdf> files;
+  final bool disabled;
   final VoidCallback onPick;
+  final ValueChanged<String> onRemove;
   final VoidCallback onClear;
   final Future<void> Function(List<DropItem> items) onDropFiles;
 
@@ -346,99 +453,71 @@ class _FileDropzoneState extends State<_FileDropzone> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final app = AppColors.of(context);
-    final selected = widget.fileName != null;
-    final highlighted = selected || _dragging;
+    final selected = widget.files.isNotEmpty;
 
     return DropTarget(
-      onDragEntered: (_) => setState(() => _dragging = true),
-      onDragExited: (_) => setState(() => _dragging = false),
-      onDragDone: (details) {
-        setState(() => _dragging = false);
-        widget.onDropFiles(details.files);
+      onDragEntered: (_) {
+        if (!widget.disabled) {
+          setState(() => _dragging = true);
+        }
       },
-      child: InkWell(
-        onTap: selected ? null : widget.onPick,
-        borderRadius: BorderRadius.circular(10),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: selected
-              ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
-              : const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-          decoration: BoxDecoration(
-            color: highlighted ? app.accentSubtle : theme.colorScheme.surface,
-            border: Border.all(
-              color: highlighted ? app.accentBorder : theme.dividerColor,
-              width: highlighted ? 1.2 : 1,
-            ),
-            borderRadius: BorderRadius.circular(10),
+      onDragExited: (_) {
+        if (_dragging) {
+          setState(() => _dragging = false);
+        }
+      },
+      onDragDone: (details) {
+        if (_dragging) {
+          setState(() => _dragging = false);
+        }
+        if (!widget.disabled) {
+          widget.onDropFiles(details.files);
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        decoration: BoxDecoration(
+          color: _dragging ? app.accentSubtle : theme.colorScheme.surface,
+          border: Border.all(
+            color: _dragging ? app.accentBorder : theme.dividerColor,
+            width: _dragging ? 1.2 : 1,
           ),
-          child: selected ? _selected(context) : _empty(context),
+          borderRadius: BorderRadius.circular(10),
         ),
+        child: selected ? _selected(context) : _empty(context),
       ),
     );
   }
 
   Widget _empty(BuildContext context) {
     final theme = Theme.of(context);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.secondary.withValues(alpha: 0.5),
-            shape: BoxShape.circle,
-          ),
-          alignment: Alignment.center,
-          child: Icon(
-            Icons.upload_file_outlined,
-            size: 16,
-            color: theme.colorScheme.primary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text(
-          _dragging ? '松手即可加入' : '点击或拖入 PDF 文件',
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-            height: 1.2,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _selected(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          alignment: Alignment.center,
-          child: Icon(
-            Icons.description_outlined,
-            size: 18,
-            color: theme.colorScheme.primary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                widget.fileName!,
+    return InkWell(
+      onTap: widget.disabled ? null : widget.onPick,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondary.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.upload_file_outlined,
+                size: 16,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                _dragging ? '松手即可加入' : '点击或拖入多个 PDF 文件',
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w600,
@@ -446,31 +525,122 @@ class _FileDropzoneState extends State<_FileDropzone> {
                   height: 1.2,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                formatFileSize(widget.fileSize ?? 0),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontSize: 11,
-                  height: 1.2,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-        Semantics(
-          label: '移除文件',
-          button: true,
-          child: IconButton(
-            icon: const Icon(Icons.close, size: 16),
-            tooltip: '移除文件',
-            onPressed: widget.onClear,
+      ),
+    );
+  }
+
+  Widget _selected(BuildContext context) {
+    final theme = Theme.of(context);
+    final totalSize = widget.files.fold<int>(
+      0,
+      (total, file) => total + file.size,
+    );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+            color: theme.colorScheme.surfaceContainer,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '已选择 ${widget.files.length} 个文件 · '
+                    '共 ${formatFileSize(totalSize)}',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: widget.disabled ? null : widget.onClear,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 28),
+                  ),
+                  child: const Text('清空'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: widget.files.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (context, index) =>
+                  _fileRow(context, widget.files[index]),
+            ),
+          ),
+          const Divider(height: 1),
+          TextButton.icon(
+            onPressed: widget.disabled ? null : widget.onPick,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size.fromHeight(34),
+              shape: const RoundedRectangleBorder(),
+            ),
+            icon: const Icon(Icons.add, size: 15),
+            label: const Text('继续添加文件'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fileRow(BuildContext context, SelectedPdf file) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 7, 4, 7),
+      child: Row(
+        children: [
+          Icon(
+            Icons.description_outlined,
+            size: 17,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              file.name,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formatFileSize(file.size),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontSize: 10,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 15),
+            tooltip: '移除 ${file.name}',
+            onPressed: widget.disabled
+                ? null
+                : () => widget.onRemove(file.path),
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -484,4 +654,3 @@ String formatFileSize(int bytes) {
   }
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
-
