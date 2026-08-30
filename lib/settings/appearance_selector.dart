@@ -23,21 +23,24 @@ class AppearanceSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final (index, (mode, label)) in _options.indexed) ...[
-          if (index > 0) const SizedBox(width: 12),
-          Expanded(
-            child: _AppearanceCard(
-              mode: mode,
-              label: label,
-              selected: value == mode,
-              onSelect: () => onChanged(mode),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 540),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final (index, (mode, label)) in _options.indexed) ...[
+            if (index > 0) const SizedBox(width: 12),
+            Expanded(
+              child: _AppearanceCard(
+                mode: mode,
+                label: label,
+                selected: value == mode,
+                onSelect: () => onChanged(mode),
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

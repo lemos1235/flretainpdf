@@ -73,9 +73,9 @@ class _HomePageState extends State<HomePage> {
       children: [
         // 左栏：任务创建控制台
         SizedBox(
-          width: 340,
+          width: 384,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 14, 7, 14),
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
             children: [
               JobFormSection(
                 key: _formKey,
@@ -90,17 +90,17 @@ class _HomePageState extends State<HomePage> {
         // 右栏：任务管理与进度中心
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(7, 14, 14, 14),
+            padding: const EdgeInsets.fromLTRB(8, 16, 16, 16),
             children: [
               if (_listError.isNotEmpty) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.error.withValues(alpha: 0.1),
+                    color: theme.colorScheme.error.withValues(alpha: 0.08),
                     border: Border.all(
-                      color: theme.colorScheme.error.withValues(alpha: 0.3),
+                      color: theme.colorScheme.error.withValues(alpha: 0.25),
                     ),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
@@ -134,7 +134,7 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
               ],
               JobListSection(
                 api: _api,

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// 自定义紧凑开关控件 (36x20)
+/// 自定义紧凑开关控件 (36x20) - Claude 风格圆润微动效开关
 class AppSwitch extends StatelessWidget {
   const AppSwitch({
     super.key,
@@ -71,19 +71,21 @@ class AppSwitch extends StatelessWidget {
   }
 }
 
-/// 对应 `.feature-card`：开关 + 标题 + 说明，打开后整块高亮。
+/// 对应 `.feature-card`：开关 + 标题 + 说明，打开后整块高亮（Claude 风格）。
 class FeatureCard extends StatelessWidget {
   const FeatureCard({
     super.key,
     required this.title,
     required this.value,
     required this.onChanged,
+    this.icon,
     this.description,
     this.children = const [],
     this.enabled = true,
   });
 
   final String title;
+  final IconData? icon;
   final String? description;
   final bool value;
   final ValueChanged<bool> onChanged;
@@ -98,14 +100,17 @@ class FeatureCard extends StatelessWidget {
     final app = AppColors.of(context);
     final isActive = enabled && value;
 
-    Widget card = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+    Widget card = AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOut,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: isActive ? app.accentSubtle : theme.colorScheme.surfaceContainer,
         border: Border.all(
           color: isActive ? app.accentBorder : theme.dividerColor,
+          width: isActive ? 1.2 : 1,
         ),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(9),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -114,10 +119,29 @@ class FeatureCard extends StatelessWidget {
             onTap: enabled ? () => onChanged(!value) : null,
             borderRadius: BorderRadius.circular(6),
             child: Row(
-              crossAxisAlignment: description != null
-                  ? CrossAxisAlignment.start
-                  : CrossAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                if (icon != null) ...[
+                  Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? theme.colorScheme.primary.withValues(alpha: 0.12)
+                          : theme.colorScheme.secondary.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      icon,
+                      size: 14,
+                      color: isActive
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -128,32 +152,33 @@ class FeatureCard extends StatelessWidget {
                         title,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
-                          fontSize: 13,
+                          fontSize: 12.5,
+                          color: theme.colorScheme.onSurface,
                           height: 1.2,
                         ),
                       ),
                       if (description case final description?) ...[
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 2),
                         Text(
                           description,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
-                            fontSize: 11,
-                            height: 1.4,
+                            fontSize: 10.5,
+                            height: 1.3,
                           ),
                         ),
                       ],
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 AppSwitch(value: value, onChanged: enabled ? onChanged : null),
               ],
             ),
           ),
           if (isActive && children.isNotEmpty) ...[
             const SizedBox(height: 8),
-            const Divider(height: 1),
+            Divider(height: 1, color: theme.dividerColor),
             const SizedBox(height: 8),
             ...children,
           ],

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
@@ -345,7 +346,7 @@ class JobFormSectionState extends State<JobFormSection> {
             .where((file) => !createdPaths.contains(file.path))
             .toList();
         if (failures.isEmpty) {
-          _status = '已创建 ${createdPaths.length} 个任务，正在后台处理。';
+          _status = '';
           _statusIsError = false;
         } else {
           _status =
@@ -385,6 +386,7 @@ class JobFormSectionState extends State<JobFormSection> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return AppPanel(
       title: '创建翻译任务',
       child: Column(
@@ -398,7 +400,7 @@ class JobFormSectionState extends State<JobFormSection> {
             onClear: _clearFiles,
             onDropFiles: _acceptDroppedFiles,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           JobSettingsFields(
             settings: _settings,
             onChanged: () {
@@ -406,11 +408,34 @@ class JobFormSectionState extends State<JobFormSection> {
               _persistConfig();
             },
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: _submitting ? null : _submit,
-            icon: const Icon(Icons.auto_awesome, size: 16),
-            label: Text(_submitting ? '正在创建…' : '开始翻译'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(38),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+              elevation: 0,
+            ),
+            icon: _submitting
+                ? SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.colorScheme.onPrimary,
+                    ),
+                  )
+                : const Icon(LucideIcons.sparkles, size: 15),
+            label: Text(
+              _submitting ? '正在创建…' : '开始翻译',
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 13.5,
+                letterSpacing: 0.2,
+              ),
+            ),
           ),
           if (_status.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -448,12 +473,43 @@ class _FileDropzone extends StatefulWidget {
 class _FileDropzoneState extends State<_FileDropzone> {
   /// 文件悬在区域上方时高亮描边，给一个「可以松手了」的反馈。
   bool _dragging = false;
+  bool _hovering = false;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final app = AppColors.of(context);
     final selected = widget.files.isNotEmpty;
+
+    // 根据交互状态确定边框颜色与粗细（悬浮保持 1px 避免抖动）
+    final Border border;
+    if (_dragging) {
+      border = Border.all(color: theme.colorScheme.primary, width: 1.4);
+    } else if (_hovering && !selected && !widget.disabled) {
+      border = Border.all(color: app.accentBorder, width: 1);
+    } else {
+      border = Border.all(color: theme.colorScheme.outline, width: 1);
+    }
+
+    final baseColor = selected
+        ? theme.colorScheme.surfaceContainer
+        : theme.colorScheme.surface;
+
+    // 使用 Color.alphaBlend 计算固化目标色，确保两端都是 100% 不透明色，
+    // 避免 AnimatedContainer 在不同 Alpha 之间插值时经过发黑发暗的中间态。
+    final Color backgroundColor;
+    if (_dragging || (_hovering && !selected && !widget.disabled)) {
+      backgroundColor = Color.alphaBlend(app.accentSubtle, baseColor);
+    } else {
+      backgroundColor = baseColor;
+    }
 
     return DropTarget(
       onDragEntered: (_) {
@@ -475,13 +531,11 @@ class _FileDropzoneState extends State<_FileDropzone> {
         }
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
-          color: _dragging ? app.accentSubtle : theme.colorScheme.surface,
-          border: Border.all(
-            color: _dragging ? app.accentBorder : theme.dividerColor,
-            width: _dragging ? 1.2 : 1,
-          ),
+          color: backgroundColor,
+          border: border,
           borderRadius: BorderRadius.circular(10),
         ),
         child: selected ? _selected(context) : _empty(context),
@@ -491,39 +545,74 @@ class _FileDropzoneState extends State<_FileDropzone> {
 
   Widget _empty(BuildContext context) {
     final theme = Theme.of(context);
+    final app = AppColors.of(context);
     return InkWell(
       onTap: widget.disabled ? null : widget.onPick,
+      onHover: widget.disabled
+          ? null
+          : (hovered) {
+              if (_hovering != hovered) {
+                setState(() => _hovering = hovered);
+              }
+            },
       borderRadius: BorderRadius.circular(10),
+      hoverColor: Colors.transparent,
+      splashColor: app.accentSubtle,
+      highlightColor: Colors.transparent,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 28,
-              height: 28,
+              width: 34,
+              height: 34,
               decoration: BoxDecoration(
-                color: theme.colorScheme.secondary.withValues(alpha: 0.5),
-                shape: BoxShape.circle,
+                color: _dragging || _hovering
+                    ? theme.colorScheme.primary.withValues(alpha: 0.14)
+                    : theme.colorScheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                  color: _dragging || _hovering
+                      ? theme.colorScheme.primary.withValues(alpha: 0.24)
+                      : theme.colorScheme.primary.withValues(alpha: 0.16),
+                ),
               ),
               alignment: Alignment.center,
               child: Icon(
-                Icons.upload_file_outlined,
-                size: 16,
+                _dragging
+                    ? LucideIcons.arrowDownToLine
+                    : LucideIcons.uploadCloud,
+                size: 17,
                 color: theme.colorScheme.primary,
               ),
             ),
             const SizedBox(width: 10),
             Flexible(
-              child: Text(
-                _dragging ? '松手即可加入' : '点击或拖入多个 PDF 文件',
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                  height: 1.2,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _dragging ? '松手即可加入' : '点击或拖入多个 PDF 文件',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12.5,
+                      color: theme.colorScheme.onSurface,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _dragging ? '释放文件将自动解析并加入' : '支持批量上传 · 保持原始排版',
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -544,10 +633,28 @@ class _FileDropzoneState extends State<_FileDropzone> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
-            color: theme.colorScheme.surfaceContainer,
+            padding: const EdgeInsets.fromLTRB(10, 7, 6, 7),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondary.withValues(alpha: 0.45),
+              border: Border(bottom: BorderSide(color: theme.dividerColor)),
+            ),
             child: Row(
               children: [
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    LucideIcons.files,
+                    size: 12,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     '已选择 ${widget.files.length} 个文件 · '
@@ -555,91 +662,210 @@ class _FileDropzoneState extends State<_FileDropzone> {
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
                       fontWeight: FontWeight.w600,
-                      fontSize: 11,
+                      fontSize: 11.5,
+                      color: theme.colorScheme.onSurface,
                     ),
                   ),
                 ),
                 TextButton(
                   onPressed: widget.disabled ? null : widget.onClear,
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 28),
+                  style:
+                      TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        foregroundColor: theme.colorScheme.onSurfaceVariant,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 26),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ).copyWith(
+                        overlayColor: WidgetStateProperty.resolveWith((states) {
+                          if (states.contains(WidgetState.hovered)) {
+                            return theme.colorScheme.error.withValues(
+                              alpha: 0.08,
+                            );
+                          }
+                          return null;
+                        }),
+                        foregroundColor: WidgetStateProperty.resolveWith((
+                          states,
+                        ) {
+                          if (states.contains(WidgetState.hovered)) {
+                            return theme.colorScheme.error;
+                          }
+                          return theme.colorScheme.onSurfaceVariant;
+                        }),
+                      ),
+                  child: const Text(
+                    '清空',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
                   ),
-                  child: const Text('清空'),
                 ),
               ],
             ),
           ),
-          const Divider(height: 1),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: ListView.separated(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              itemCount: widget.files.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, index) =>
-                  _fileRow(context, widget.files[index]),
+            constraints: const BoxConstraints(maxHeight: 220, minHeight: 48),
+            child: Scrollbar(
+              controller: _scrollController,
+              thumbVisibility: widget.files.length > 3,
+              child: ListView.separated(
+                controller: _scrollController,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                shrinkWrap: true,
+                itemCount: widget.files.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 3),
+                itemBuilder: (context, index) => _FileRowItem(
+                  file: widget.files[index],
+                  disabled: widget.disabled,
+                  onRemove: () => widget.onRemove(widget.files[index].path),
+                ),
+              ),
             ),
           ),
-          const Divider(height: 1),
-          TextButton.icon(
-            onPressed: widget.disabled ? null : widget.onPick,
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              minimumSize: const Size.fromHeight(34),
-              shape: const RoundedRectangleBorder(),
+          Container(
+            decoration: BoxDecoration(
+              color: _dragging
+                  ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                  : theme.colorScheme.surface.withValues(alpha: 0.4),
+              border: Border(top: BorderSide(color: theme.dividerColor)),
             ),
-            icon: const Icon(Icons.add, size: 15),
-            label: const Text('继续添加文件'),
+            child: TextButton.icon(
+              onPressed: widget.disabled ? null : widget.onPick,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                minimumSize: const Size.fromHeight(34),
+                foregroundColor: theme.colorScheme.primary,
+                shape: const RoundedRectangleBorder(),
+                padding: const EdgeInsets.symmetric(vertical: 7),
+              ),
+              icon: Icon(
+                _dragging ? LucideIcons.arrowDownToLine : LucideIcons.plus,
+                size: 13,
+              ),
+              label: Text(
+                _dragging ? '松手即可追加文件' : '继续添加文件',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _fileRow(BuildContext context, SelectedPdf file) {
+class _FileRowItem extends StatefulWidget {
+  const _FileRowItem({
+    required this.file,
+    required this.disabled,
+    required this.onRemove,
+  });
+
+  final SelectedPdf file;
+  final bool disabled;
+  final VoidCallback onRemove;
+
+  @override
+  State<_FileRowItem> createState() => _FileRowItemState();
+}
+
+class _FileRowItemState extends State<_FileRowItem> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 7, 4, 7),
-      child: Row(
-        children: [
-          Icon(
-            Icons.description_outlined,
-            size: 17,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              file.name,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                fontSize: 12,
+    final app = AppColors.of(context);
+    final file = widget.file;
+
+    final isDark = theme.brightness == Brightness.dark;
+    final baseColor = theme.colorScheme.surfaceContainer;
+    final hoverColor = Color.alphaBlend(
+      isDark
+          ? app.accentSubtle
+          : theme.colorScheme.secondary.withValues(alpha: 0.6),
+      baseColor,
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.fromLTRB(8, 5, 4, 5),
+        decoration: BoxDecoration(
+          color: _hovered ? hoverColor : baseColor,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.16),
+                  width: 1,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                LucideIcons.fileText,
+                size: 15,
+                color: theme.colorScheme.primary,
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            formatFileSize(file.size),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontSize: 10,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    file.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      height: 1.25,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    formatFileSize(file.size),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close, size: 15),
-            tooltip: '移除 ${file.name}',
-            onPressed: widget.disabled
-                ? null
-                : () => widget.onRemove(file.path),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          ),
-        ],
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(LucideIcons.x, size: 14),
+              style: IconButton.styleFrom(
+                foregroundColor: theme.colorScheme.onSurfaceVariant,
+                hoverColor: theme.colorScheme.error.withValues(alpha: 0.12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+              onPressed: widget.disabled ? null : widget.onRemove,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -10,9 +10,9 @@
 namespace {
 
 // 默认窗口尺寸和最小尺寸都按客户区算，与 macOS 端
-// MainFlutterWindow.swift 里的 800x628 / 740x540 保持一致。
-constexpr int kDefaultWidth = 800;
-constexpr int kDefaultHeight = 628;
+// MainFlutterWindow.swift 里的 1060x700 / 740x540 保持一致。
+constexpr int kDefaultWidth = 1060;
+constexpr int kDefaultHeight = 700;
 constexpr int kMinimumWidth = 740;
 constexpr int kMinimumHeight = 540;
 

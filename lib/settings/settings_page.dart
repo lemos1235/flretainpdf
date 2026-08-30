@@ -7,7 +7,6 @@ import 'appearance_selector.dart';
 import 'concurrency_selector.dart';
 
 /// 设置页：放和具体文档无关的全局配置 —— 翻译模型接入信息、MinerU 服务地址。
-/// 布局沿用主页的 `.page-shell`（限宽居中 + 卡片），只是内容更窄一些。
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -21,7 +20,7 @@ class SettingsPage extends StatelessWidget {
       children: [
         Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 700),
+            constraints: const BoxConstraints(maxWidth: 800),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [

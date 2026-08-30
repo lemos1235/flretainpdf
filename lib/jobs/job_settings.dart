@@ -1,14 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
 import '../prefs_scope.dart';
 import '../theme/app_theme.dart';
-import '../widgets/feature_card.dart';
 import '../widgets/labeled_field.dart';
 import 'page_selection.dart';
 
-/// 两块折叠卡片的展开状态，跨会话记住用户的展开习惯。
+/// 常用目标语言预设列表
+const _popularLanguages = [
+  (code: 'zh-CN', label: '中文'),
+  (code: 'en', label: '英文'),
+  (code: 'ja', label: '日文'),
+  (code: 'ko', label: '韩文'),
+];
+
+String _formatLanguageBadge(String code) {
+  for (final lang in _popularLanguages) {
+    if (lang.code.toLowerCase() == code.toLowerCase()) {
+      return '${lang.label} ($code)';
+    }
+  }
+  return code;
+}
+
 const _translationExpandedKey = 'retainpdf-rs.section.translation-expanded';
 const _advancedExpandedKey = 'retainpdf-rs.section.advanced-expanded';
 
@@ -179,67 +195,159 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
       children: [
         // 核心翻译参数折叠卡片
         _CollapsibleCard(
-          icon: Icons.translate_outlined,
+          icon: LucideIcons.languages,
           title: '翻译参数',
           // 折叠时也能一眼看到译入语言
-          badge: targetLanguage.isEmpty ? null : targetLanguage,
+          badge: targetLanguage.isEmpty
+              ? null
+              : _formatLanguageBadge(targetLanguage),
+          badgeHighlighted: targetLanguage.isNotEmpty,
           expanded: _translationExpanded,
           onToggle: () => setState(() {
             _translationExpanded = !_translationExpanded;
             _prefs.setBool(_translationExpandedKey, _translationExpanded);
           }),
           children: [
-            // 目标语言输入框
-            LabeledField(
+            // 目标语言：Label 与微型快捷胶囊合并为同一行
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  '目标语言',
+                  style: fieldLabelStyle(context),
+                  strutStyle: fieldLabelStrutStyle,
+                ),
+                const Spacer(),
+                Wrap(
+                  spacing: 4,
+                  children: _popularLanguages.map((lang) {
+                    final isSelected =
+                        targetLanguage.toLowerCase() == lang.code.toLowerCase();
+                    final app = AppColors.of(context);
+                    return InkWell(
+                      onTap: () {
+                        setState(() {
+                          settings.targetLanguage.text = lang.code;
+                        });
+                        widget.onChanged();
+                      },
+                      borderRadius: BorderRadius.circular(5),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 140),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? app.accentSubtle
+                              : theme.colorScheme.surface,
+                          border: Border.all(
+                            color: isSelected
+                                ? app.accentBorder
+                                : theme.dividerColor,
+                            width: isSelected ? 1.2 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          lang.label,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: isSelected
+                                ? app.accentText
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+
+            // 目标语言代码输入框
+            TextField(
               controller: settings.targetLanguage,
-              // 自己也要重建，徽章才跟着输入走
-              onChanged: () => setState(widget.onChanged),
-              label: '目标语言',
-              hint: '例如 zh-CN, en, ja',
-              bottomPadding: 8,
+              onChanged: (_) => setState(widget.onChanged),
+              style: fieldTextStyle,
+              strutStyle: fieldStrutStyle,
+              decoration: const InputDecoration(hintText: '例如 zh-CN, en, ja'),
             ),
+            const SizedBox(height: 8),
 
-            // 页码范围
-            LabeledField(
-              controller: settings.pages,
-              onChanged: widget.onChanged,
-              label: '翻译页码（留空即全篇）',
-              hint: '例如 1-10,11,13 或 5-',
-              bottomPadding: 8,
-            ),
-
-            // 跳过页码
-            LabeledField(
-              controller: settings.skipPages,
-              onChanged: widget.onChanged,
-              label: '跳过页码（不翻译）',
-              hint: '例如 1,3-4',
-              last: true,
+            // 页码设置：翻译页码与跳过页码双列并排，大幅节省纵向高度
+            Row(
+              children: [
+                Expanded(
+                  child: LabeledField(
+                    controller: settings.pages,
+                    onChanged: widget.onChanged,
+                    label: '翻译页码',
+                    hint: '例如 1-10,11,13 或 5-',
+                    last: true,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: LabeledField(
+                    controller: settings.skipPages,
+                    onChanged: widget.onChanged,
+                    label: '跳过页码',
+                    hint: '例如 1,3-4',
+                    last: true,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
         const SizedBox(height: 10),
 
-        // 高级识别选项折叠卡片
+        // 高级版面识别选项折叠卡片
         _CollapsibleCard(
-          icon: Icons.tune_outlined,
+          icon: LucideIcons.scanLine,
           title: '版面识别',
-          badge: isMineru ? 'MinerU' : '原生',
-          badgeHighlighted: isMineru,
+          badge: isMineru
+              ? (settings.formulaRecognitionEnabled ||
+                        settings.tableRecognitionEnabled ||
+                        settings.ocrEnabled
+                    ? 'MinerU · 增强已开'
+                    : 'MinerU')
+              : (settings.formulaRecognitionEnabled ? '原生 · 公式已开' : '原生启发式'),
+          badgeHighlighted: isMineru || settings.formulaRecognitionEnabled,
           expanded: advancedExpanded,
           onToggle: () => setState(() {
             _advancedExpanded = !advancedExpanded;
             _prefs.setBool(_advancedExpandedKey, !advancedExpanded);
           }),
           children: [
-            Text(
-              '版面提取方案',
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurfaceVariant,
-                fontSize: 12,
-                letterSpacing: 0.2,
-              ),
+            Row(
+              children: [
+                Text(
+                  '版面提取方案',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 11.5,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  isMineru ? '深度模型分析' : '规则快速提取',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant.withValues(
+                      alpha: 0.7,
+                    ),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 6),
             Row(
@@ -247,6 +355,8 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
                 Expanded(
                   child: _BackendChoice(
                     title: '原生启发式',
+                    tag: '本地 · 极速',
+                    icon: LucideIcons.zap,
                     selected: !isMineru,
                     onTap: () => _onBackendChanged('native'),
                   ),
@@ -255,6 +365,8 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
                 Expanded(
                   child: _BackendChoice(
                     title: 'MinerU',
+                    tag: '高精 · 深度',
+                    icon: LucideIcons.sparkles,
                     selected: isMineru,
                     onTap: () => _onBackendChanged('mineru'),
                   ),
@@ -263,44 +375,127 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
             ),
             const SizedBox(height: 10),
 
-            Text(
-              '内容保护与增强识别',
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: theme.colorScheme.onSurfaceVariant,
-                fontSize: 12,
-                letterSpacing: 0.2,
-              ),
+            Row(
+              children: [
+                Text(
+                  '内容保护与增强',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 11.5,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  isMineru ? '按需点选启用' : '原生引擎仅支持公式',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant.withValues(
+                      alpha: 0.7,
+                    ),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 6),
-            FeatureCard(
-              title: '公式识别',
-              value: settings.formulaRecognitionEnabled,
-              onChanged: (value) {
-                settings.formulaRecognitionEnabled = value;
-                widget.onChanged();
-              },
-            ),
-            if (isMineru) ...[
-              const SizedBox(height: 6),
-              FeatureCard(
-                title: '表格识别',
-                value: settings.tableRecognitionEnabled,
-                onChanged: (value) {
-                  settings.tableRecognitionEnabled = value;
-                  widget.onChanged();
-                },
+            if (isMineru)
+              Row(
+                children: [
+                  Expanded(
+                    child: _FeatureChip(
+                      title: '公式识别',
+                      icon: LucideIcons.sigma,
+                      value: settings.formulaRecognitionEnabled,
+                      tooltip: '保留 LaTeX 格式数学公式',
+                      onChanged: (val) {
+                        setState(() {
+                          settings.formulaRecognitionEnabled = val;
+                        });
+                        widget.onChanged();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _FeatureChip(
+                      title: '表格识别',
+                      icon: LucideIcons.table,
+                      value: settings.tableRecognitionEnabled,
+                      tooltip: '识别并保留复杂表格结构',
+                      onChanged: (val) {
+                        setState(() {
+                          settings.tableRecognitionEnabled = val;
+                        });
+                        widget.onChanged();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _FeatureChip(
+                      title: 'OCR 识别',
+                      icon: LucideIcons.scanText,
+                      value: settings.ocrEnabled,
+                      tooltip: '提取扫描件及图片中的文本',
+                      onChanged: (val) {
+                        setState(() {
+                          settings.ocrEnabled = val;
+                        });
+                        widget.onChanged();
+                      },
+                    ),
+                  ),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: _FeatureChip(
+                      title: '公式识别',
+                      icon: LucideIcons.sigma,
+                      value: settings.formulaRecognitionEnabled,
+                      tooltip: '保留 LaTeX 格式数学公式',
+                      onChanged: (val) {
+                        setState(() {
+                          settings.formulaRecognitionEnabled = val;
+                        });
+                        widget.onChanged();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surface,
+                        border: Border.all(
+                          color: theme.colorScheme.outline.withValues(
+                            alpha: 0.5,
+                          ),
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '切 MinerU 解锁表格/OCR',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: theme.colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.7,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              FeatureCard(
-                title: 'OCR 识别',
-                value: settings.ocrEnabled,
-                onChanged: (value) {
-                  settings.ocrEnabled = value;
-                  widget.onChanged();
-                },
-              ),
-            ],
           ],
         ),
       ],
@@ -308,17 +503,19 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
   }
 
   void _onBackendChanged(String value) {
-    widget.settings.extractBackend = value;
-    if (value != 'mineru') {
-      widget.settings.ocrEnabled = false;
-      widget.settings.tableRecognitionEnabled = false;
-    }
+    setState(() {
+      widget.settings.extractBackend = value;
+      if (value != 'mineru') {
+        widget.settings.ocrEnabled = false;
+        widget.settings.tableRecognitionEnabled = false;
+      }
+    });
     widget.onChanged();
   }
 }
 
 /// 参数分组用的折叠卡片：头部一行（图标 + 标题 + 可选徽章 + 箭头），
-/// 展开后用分割线接内容。翻译参数和高级识别两块共用同一套外观。
+/// 展开后用分割线接内容。翻译参数和高级识别两块共用同一套外观（Claude 风格）。
 class _CollapsibleCard extends StatelessWidget {
   const _CollapsibleCard({
     required this.icon,
@@ -343,6 +540,8 @@ class _CollapsibleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final app = AppColors.of(context);
+
     return Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainer,
@@ -357,11 +556,28 @@ class _CollapsibleCard extends StatelessWidget {
             onTap: onToggle,
             borderRadius: BorderRadius.circular(12),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Icon(icon, size: 16, color: theme.colorScheme.primary),
+                  Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: badgeHighlighted
+                          ? theme.colorScheme.primary.withValues(alpha: 0.12)
+                          : theme.colorScheme.secondary.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      icon,
+                      size: 14,
+                      color: badgeHighlighted
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -375,36 +591,41 @@ class _CollapsibleCard extends StatelessWidget {
                     ),
                   ),
                   if (badge case final badge?) ...[
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
+                        horizontal: 7,
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
                         color: badgeHighlighted
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.secondary,
-                        borderRadius: BorderRadius.circular(10),
+                            ? app.accentSubtle
+                            : theme.colorScheme.secondary.withValues(
+                                alpha: 0.7,
+                              ),
+                        border: Border.all(
+                          color: badgeHighlighted
+                              ? app.accentBorder
+                              : theme.dividerColor,
+                        ),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         badge,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w600,
                           color: badgeHighlighted
-                              ? theme.colorScheme.onPrimary
-                              : theme.colorScheme.onSecondary,
+                              ? app.accentText
+                              : theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
                   ],
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   Icon(
-                    expanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 18,
+                    expanded ? LucideIcons.chevronUp : LucideIcons.chevronDown,
+                    size: 16,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ],
@@ -412,18 +633,17 @@ class _CollapsibleCard extends StatelessWidget {
             ),
           ),
 
-          // 展开内容：用 AnimatedSize 包一层，状态变化（比如版面识别卡片
-          // 会随网络配置回来后的字段推断展开）是平滑过渡而不是硬切换。
+          // 展开内容
           AnimatedSize(
             duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
+            curve: Curves.easeOutCubic,
             alignment: Alignment.topCenter,
             child: !expanded
                 ? const SizedBox(width: double.infinity)
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Divider(height: 1),
+                      Divider(height: 1, color: theme.dividerColor),
                       Padding(
                         padding: const EdgeInsets.all(10),
                         child: Column(
@@ -440,15 +660,101 @@ class _CollapsibleCard extends StatelessWidget {
   }
 }
 
-/// 提取方案横向快速切换卡片
+/// 内容保护与增强开关胶囊（Claude 风格轻量微卡片 Toggle Chip）
+class _FeatureChip extends StatelessWidget {
+  const _FeatureChip({
+    required this.title,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+    this.tooltip,
+  });
+
+  final String title;
+  final IconData icon;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final app = AppColors.of(context);
+
+    Widget chip = InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        decoration: BoxDecoration(
+          color: value ? app.accentSubtle : theme.colorScheme.surface,
+          border: Border.all(
+            color: value ? app.accentBorder : theme.colorScheme.outline,
+            width: value ? 1.2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 13,
+              color: value
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: value ? FontWeight.w600 : FontWeight.w500,
+                  color: value ? app.accentText : theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+            if (value) ...[
+              const SizedBox(width: 3),
+              Icon(
+                LucideIcons.check,
+                size: 11,
+                color: theme.colorScheme.primary,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    if (tooltip != null) {
+      chip = Tooltip(
+        message: tooltip!,
+        waitDuration: const Duration(milliseconds: 300),
+        child: chip,
+      );
+    }
+    return chip;
+  }
+}
+
+/// 提取方案横向快速切换卡片（Claude 风格 Segmented Hero Card）
 class _BackendChoice extends StatelessWidget {
   const _BackendChoice({
     required this.title,
+    required this.tag,
+    required this.icon,
     required this.selected,
     required this.onTap,
   });
 
   final String title;
+  final String tag;
+  final IconData icon;
   final bool selected;
   final VoidCallback onTap;
 
@@ -456,30 +762,80 @@ class _BackendChoice extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final app = AppColors.of(context);
+
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(9),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        alignment: Alignment.center,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
         decoration: BoxDecoration(
           color: selected
               ? app.accentSubtle
               : theme.colorScheme.surfaceContainer,
           border: Border.all(
             color: selected ? app.accentBorder : theme.dividerColor,
-            width: selected ? 1.2 : 1,
+            width: selected ? 1.4 : 1,
           ),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(9),
         ),
-        child: Text(
-          title,
-          style: theme.textTheme.bodySmall?.copyWith(
-            fontWeight: FontWeight.w600,
-            color: selected ? app.accentText : theme.colorScheme.onSurface,
-            fontSize: 12,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 13,
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    title,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? app.accentText
+                          : theme.colorScheme.onSurface,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  Icon(
+                    LucideIcons.check,
+                    size: 13,
+                    color: theme.colorScheme.primary,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+              decoration: BoxDecoration(
+                color: selected
+                    ? theme.colorScheme.primary.withValues(alpha: 0.1)
+                    : theme.colorScheme.secondary.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                tag,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w600,
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
