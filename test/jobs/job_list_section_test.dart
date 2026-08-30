@@ -202,4 +202,89 @@ void main() {
 
     expect(refreshCount, 1);
   });
+
+  testWidgets('存在已完成任务时显示已完成徽标和批量操作按钮', (tester) async {
+    await _pumpList(
+      tester,
+      JobSummary(
+        jobId: 'job-1',
+        filename: 'done.pdf',
+        status: 'completed',
+        step: 'completed',
+        message: '全部完成',
+        targetLanguage: 'zh-CN',
+        pages: '1-3',
+        skipPages: '',
+        pageCount: 3,
+        translatedPdfUrl: '/files/done.pdf',
+      ),
+      additionalJobs: [_job(status: 'translating')],
+    );
+
+    expect(find.text('1 个已完成'), findsOneWidget);
+    expect(find.byTooltip('批量下载已完成任务'), findsOneWidget);
+    expect(find.byTooltip('批量选择'), findsOneWidget);
+    expect(find.text('下载译文 PDF'), findsOneWidget);
+  });
+
+  testWidgets('开启批量选择模式后展示多选操作栏与 Checkbox 并支持全选/取消全选', (tester) async {
+    await _pumpList(
+      tester,
+      JobSummary(
+        jobId: 'job-1',
+        filename: 'done1.pdf',
+        status: 'completed',
+        step: 'completed',
+        message: '',
+        targetLanguage: 'zh-CN',
+        pages: '',
+        skipPages: '',
+        pageCount: 1,
+        translatedPdfUrl: '/files/done1.pdf',
+      ),
+      additionalJobs: [
+        JobSummary(
+          jobId: 'job-2',
+          filename: 'done2.pdf',
+          status: 'completed',
+          step: 'completed',
+          message: '',
+          targetLanguage: 'en',
+          pages: '',
+          skipPages: '',
+          pageCount: 2,
+          translatedPdfUrl: '/files/done2.pdf',
+        ),
+      ],
+    );
+
+    // 点击批量选择
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+
+    // 默认全选可下载任务
+    expect(find.text('已选中 2 / 2 项'), findsOneWidget);
+    expect(find.text('下载选中 (2)'), findsOneWidget);
+    expect(find.text('取消全选'), findsOneWidget);
+
+    // 取消全选
+    await tester.tap(find.text('取消全选'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已选中 0 / 2 项'), findsOneWidget);
+    expect(find.text('全选'), findsOneWidget);
+
+    // 重新全选
+    await tester.tap(find.text('全选'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已选中 2 / 2 项'), findsOneWidget);
+
+    // 退出多选
+    await tester.tap(find.byTooltip('退出多选'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已选中 2 / 2 项'), findsNothing);
+  });
 }
+
