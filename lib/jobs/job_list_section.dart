@@ -767,12 +767,15 @@ class _JobCardState extends State<_JobCard> {
         ? Color.alphaBlend(app.accentSubtle, theme.colorScheme.surface)
         : theme.colorScheme.surface;
 
-    // 卡片边框颜色
+    // 卡片边框颜色（确保始终为完全不透明纯色，避免动画插值时过冲闪烁）
     Color borderColor = theme.dividerColor;
     if (widget.isSelected) {
       borderColor = theme.colorScheme.primary;
     } else if (isFailed) {
-      borderColor = theme.colorScheme.error.withValues(alpha: 0.35);
+      borderColor = Color.alphaBlend(
+        theme.colorScheme.error.withValues(alpha: 0.35),
+        cardBgColor,
+      );
     } else if (_isHovered) {
       borderColor = theme.colorScheme.outline;
     }

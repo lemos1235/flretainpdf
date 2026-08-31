@@ -25,7 +25,7 @@ class AppTheme {
       surfaceContainer: const Color(0xFFFFFFFF),
       onSurfaceVariant: const Color(0xFF6E6659),
       outline: const Color(0xFFE2DDD5),
-      outlineVariant: const Color(0x1A3D3929),
+      outlineVariant: const Color(0xFFE7E5E0),
       error: const Color(0xFFC4342D),
       onError: Colors.white,
     );
@@ -45,7 +45,7 @@ class AppTheme {
       surfaceContainer: const Color(0xFF30302E),
       onSurfaceVariant: const Color(0xFFA8A197),
       outline: const Color(0xFF45433E),
-      outlineVariant: const Color(0x1FFFFFFF),
+      outlineVariant: const Color(0xFF383735),
       error: const Color(0xFFE06B63),
       onError: const Color(0xFF1F1E1D),
     );
