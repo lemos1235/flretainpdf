@@ -137,3 +137,40 @@ Future<void> openDirectoryInSystemExplorer(String directoryPath) async {
     // 忽略打开系统文件管理器的异常
   }
 }
+
+/// 调用系统默认程序打开指定文件
+Future<void> openFileInSystemViewer(String filePath) async {
+  try {
+    if (Platform.isMacOS) {
+      await Process.run('open', [filePath]);
+    } else if (Platform.isWindows) {
+      await Process.run('cmd.exe', ['/c', 'start', '', filePath]);
+    } else if (Platform.isLinux) {
+      await Process.run('xdg-open', [filePath]);
+    }
+  } catch (_) {
+    // 忽略打开默认程序的异常
+  }
+}
+
+/// 将译文 PDF 保存到临时目录并使用系统默认程序打开查看
+Future<void> viewPdfArtifact({
+  required ApiClient api,
+  required JobSummary job,
+}) async {
+  final bytes = await api.downloadArtifact(job.translatedPdfUrl);
+  final tempDir = Directory.systemTemp;
+  final previewDir = Directory(
+    '${tempDir.path}${Platform.pathSeparator}retainpdf_preview',
+  );
+  if (!previewDir.existsSync()) {
+    previewDir.createSync(recursive: true);
+  }
+  final baseName = suggestPdfFileName(job);
+  final targetFile = File(
+    '${previewDir.path}${Platform.pathSeparator}${job.jobId}_$baseName',
+  );
+  await targetFile.writeAsBytes(bytes, flush: true);
+  await openFileInSystemViewer(targetFile.path);
+}
+

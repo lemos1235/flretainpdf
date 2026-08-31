@@ -232,4 +232,39 @@ void main() {
       expect(File('${tempDir.path}${Platform.pathSeparator}doc2-zh-CN.pdf').existsSync(), isTrue);
     });
   });
+
+  group('viewPdfArtifact', () {
+    test('正确下载产物并写入预览临时文件', () async {
+      final job = _createJob(
+        jobId: 'test-job-99',
+        filename: 'preview_doc.pdf',
+        status: 'completed',
+        url: '/files/preview_doc.pdf',
+      );
+
+      final api = ApiClient(
+        client: MockClient((request) async {
+          expect(request.url.path, '/files/preview_doc.pdf');
+          return http.Response.bytes(Uint8List.fromList([37, 80, 68, 70]), 200);
+        }),
+      )..apiToken = 'token';
+
+      await viewPdfArtifact(api: api, job: job);
+
+      final previewDir = Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}retainpdf_preview',
+      );
+      final targetFile = File(
+        '${previewDir.path}${Platform.pathSeparator}test-job-99_preview_doc-zh-CN.pdf',
+      );
+      expect(targetFile.existsSync(), isTrue);
+      expect(await targetFile.readAsBytes(), [37, 80, 68, 70]);
+
+      // 清理测试产物
+      if (targetFile.existsSync()) {
+        targetFile.deleteSync();
+      }
+    });
+  });
 }
+

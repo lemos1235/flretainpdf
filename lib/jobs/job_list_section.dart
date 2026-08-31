@@ -737,7 +737,7 @@ class _JobCard extends StatefulWidget {
 
 class _JobCardState extends State<_JobCard> {
   bool _stepsExpanded = false;
-  bool _downloading = false;
+  bool _viewing = false;
   bool _deleting = false;
   bool _retrying = false;
   String? _retryError;
@@ -991,7 +991,7 @@ class _JobCardState extends State<_JobCard> {
                     const SizedBox(width: 8),
                   ],
 
-                  // 下载译文 PDF 按钮（已完成任务）
+                  // 查看 PDF 按钮（已完成任务）
                   if (job.translatedPdfUrl.isNotEmpty) ...[
                     FilledButton.icon(
                       style: FilledButton.styleFrom(
@@ -1006,7 +1006,7 @@ class _JobCardState extends State<_JobCard> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      icon: _downloading
+                      icon: _viewing
                           ? const SizedBox(
                               width: 13,
                               height: 13,
@@ -1015,9 +1015,9 @@ class _JobCardState extends State<_JobCard> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Icon(LucideIcons.download, size: 13),
-                      onPressed: _downloading ? null : _download,
-                      label: Text(_downloading ? '正在下载…' : '下载译文 PDF'),
+                          : const Icon(LucideIcons.eye, size: 13),
+                      onPressed: _viewing ? null : _viewPdf,
+                      label: Text(_viewing ? '正在打开…' : '查看 PDF'),
                     ),
                     const SizedBox(width: 8),
                   ],
@@ -1199,24 +1199,21 @@ class _JobCardState extends State<_JobCard> {
     }
   }
 
-  /// 先把产物下下来，再让系统的保存对话框决定落到哪儿。
-  Future<void> _download() async {
-    setState(() => _downloading = true);
+  /// 将译文 PDF 下载至临时目录并使用系统默认 PDF 阅读器打开查看
+  Future<void> _viewPdf() async {
+    setState(() {
+      _viewing = true;
+      _retryError = null;
+    });
     try {
-      final bytes = await widget.api.downloadArtifact(
-        widget.job.translatedPdfUrl,
-      );
-      await FilePicker.saveFile(
-        fileName: suggestPdfFileName(widget.job),
-        bytes: bytes,
-        mimeType: 'application/pdf',
-        dialogTitle: '保存纯译文 PDF',
-        type: FileType.custom,
-        allowedExtensions: const ['pdf'],
-      );
+      await viewPdfArtifact(api: widget.api, job: widget.job);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _retryError = describeError(error));
+      }
     } finally {
       if (mounted) {
-        setState(() => _downloading = false);
+        setState(() => _viewing = false);
       }
     }
   }

@@ -224,7 +224,33 @@ void main() {
     expect(find.text('1 个已完成'), findsOneWidget);
     expect(find.byTooltip('批量下载已完成任务'), findsOneWidget);
     expect(find.byTooltip('批量选择'), findsOneWidget);
-    expect(find.text('下载译文 PDF'), findsOneWidget);
+    expect(find.text('查看 PDF'), findsOneWidget);
+  });
+
+  testWidgets('点击查看 PDF 按钮时请求下载并在出错时显示错误', (tester) async {
+    await _pumpList(
+      tester,
+      JobSummary(
+        jobId: 'job-1',
+        filename: 'done.pdf',
+        status: 'completed',
+        step: 'completed',
+        message: '全部完成',
+        targetLanguage: 'zh-CN',
+        pages: '1-3',
+        skipPages: '',
+        pageCount: 3,
+        translatedPdfUrl: '/files/done.pdf',
+      ),
+      client: MockClient((request) async {
+        return http.Response('Not Found', 404);
+      }),
+    );
+
+    await tester.tap(find.text('查看 PDF'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('HTTP 404'), findsOneWidget);
   });
 
   testWidgets('开启批量选择模式后展示多选操作栏与 Checkbox 并支持全选/取消全选', (tester) async {
