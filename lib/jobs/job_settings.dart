@@ -35,13 +35,19 @@ const jobSettingsFieldKeys = [
   'translation_target_language',
   'pages',
   'skip_pages',
-  'table_recognition_base_url',
-  'table_recognition_flavor',
   'extract_backend',
   'formula_recognition_enabled',
   'table_recognition_enabled',
   'ocr_enabled',
 ];
+
+/// 桌面端的原生启发式方案不再接入独立表格识别服务；原生表格识别仅保留在
+/// web 客户端。这里的公式、表格和 OCR 开关因此都只对 MinerU 生效。
+const _mineruOnlyRecognitionFieldKeys = {
+  'formula_recognition_enabled',
+  'table_recognition_enabled',
+  'ocr_enabled',
+};
 
 /// 创建任务表单里和单个文档相关的那组参数：字段状态和它们的渲染抽在这里。
 ///
@@ -51,20 +57,13 @@ class JobSettingsController {
   final targetLanguage = TextEditingController(text: 'zh-CN');
   final pages = TextEditingController();
   final skipPages = TextEditingController();
-  final tableRecognitionBaseUrl = TextEditingController();
 
   String extractBackend = 'native';
-  String tableRecognitionFlavor = 'lattice';
   bool formulaRecognitionEnabled = false;
   bool tableRecognitionEnabled = false;
   bool ocrEnabled = false;
 
-  List<TextEditingController> get _all => [
-    targetLanguage,
-    pages,
-    skipPages,
-    tableRecognitionBaseUrl,
-  ];
+  List<TextEditingController> get _all => [targetLanguage, pages, skipPages];
 
   void applyConfig(AppConfig config) {
     if (config.translationDefaultTargetLanguage.isNotEmpty) {
@@ -72,11 +71,7 @@ class JobSettingsController {
     } else if (targetLanguage.text.isEmpty) {
       targetLanguage.text = 'zh-CN';
     }
-    tableRecognitionBaseUrl.text = config.tableRecognitionBaseUrl;
-    tableRecognitionFlavor = _flavorOr(config.tableRecognitionFlavor);
   }
-
-  String _flavorOr(String value) => value == 'stream' ? 'stream' : 'lattice';
 
   /// 页码相关的本地校验，提交前先过一遍。合法时返回空串。
   String validatePages() {
@@ -96,8 +91,6 @@ class JobSettingsController {
       'pages': pages.text.trim(),
       'skip_pages': skipPages.text.trim(),
       'extract_backend': extractBackend,
-      'table_recognition_base_url': tableRecognitionBaseUrl.text.trim(),
-      'table_recognition_flavor': tableRecognitionFlavor,
       'formula_recognition_enabled': formulaRecognitionEnabled,
       'table_recognition_enabled': tableRecognitionEnabled,
       'ocr_enabled': ocrEnabled,
@@ -117,6 +110,10 @@ class JobSettingsController {
     _fieldValues.forEach((key, value) {
       if (value is bool) {
         if (value) {
+          if (extractBackend != 'mineru' &&
+              _mineruOnlyRecognitionFieldKeys.contains(key)) {
+            return;
+          }
           fields[key] = 'on';
         }
       } else {
@@ -128,7 +125,16 @@ class JobSettingsController {
 
   /// 重试接口用的 JSON 字段：同一组参数，但布尔值发真正的 JSON 布尔，
   /// 不是 multipart 表单那套「勾上发 'on'，没勾就不出现」的语义。
-  Map<String, dynamic> toRetryFields() => Map.of(_fieldValues);
+  /// 原生模式下增强识别开关统一按 false 发送，避免传递无效参数。
+  Map<String, dynamic> toRetryFields() {
+    final fields = Map<String, Object>.of(_fieldValues);
+    if (extractBackend != 'mineru') {
+      for (final key in _mineruOnlyRecognitionFieldKeys) {
+        fields[key] = false;
+      }
+    }
+    return fields;
+  }
 
   void dispose() {
     for (final controller in _all) {
@@ -185,10 +191,10 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
     final targetLanguage = settings.targetLanguage.text.trim();
     final advancedExpanded =
         _advancedExpanded ??
-        (isMineru ||
-            settings.formulaRecognitionEnabled ||
-            settings.tableRecognitionEnabled ||
-            settings.ocrEnabled);
+        (isMineru &&
+            (settings.formulaRecognitionEnabled ||
+                settings.tableRecognitionEnabled ||
+                settings.ocrEnabled));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -318,8 +324,8 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
                         settings.ocrEnabled
                     ? 'MinerU · 增强已开'
                     : 'MinerU')
-              : (settings.formulaRecognitionEnabled ? '原生 · 公式已开' : '原生启发式'),
-          badgeHighlighted: isMineru || settings.formulaRecognitionEnabled,
+              : '原生启发式',
+          badgeHighlighted: isMineru,
           expanded: advancedExpanded,
           onToggle: () => setState(() {
             _advancedExpanded = !advancedExpanded;
@@ -373,33 +379,32 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-
-            Row(
-              children: [
-                Text(
-                  '内容保护与增强',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontSize: 11.5,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  isMineru ? '按需点选启用' : '原生引擎仅支持公式',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant.withValues(
-                      alpha: 0.7,
+            if (isMineru) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    '内容保护与增强',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 11.5,
+                      letterSpacing: 0.2,
                     ),
-                    fontSize: 10.5,
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            if (isMineru)
+                  const Spacer(),
+                  Text(
+                    '按需点选启用',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.7,
+                      ),
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Expanded(
@@ -447,55 +452,8 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
                     ),
                   ),
                 ],
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: _FeatureChip(
-                      title: '公式识别',
-                      icon: LucideIcons.sigma,
-                      value: settings.formulaRecognitionEnabled,
-                      tooltip: '保留 LaTeX 格式数学公式',
-                      onChanged: (val) {
-                        setState(() {
-                          settings.formulaRecognitionEnabled = val;
-                        });
-                        widget.onChanged();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surface,
-                        border: Border.all(
-                          color: theme.colorScheme.outline.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '切 MinerU 解锁表格/OCR',
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: theme.colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.7,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ),
+            ],
           ],
         ),
       ],
@@ -505,10 +463,6 @@ class _JobSettingsFieldsState extends State<JobSettingsFields> {
   void _onBackendChanged(String value) {
     setState(() {
       widget.settings.extractBackend = value;
-      if (value != 'mineru') {
-        widget.settings.ocrEnabled = false;
-        widget.settings.tableRecognitionEnabled = false;
-      }
     });
     widget.onChanged();
   }

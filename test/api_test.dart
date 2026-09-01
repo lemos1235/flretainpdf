@@ -59,8 +59,6 @@ void main() {
             'translation_default_target_language': 'zh-CN',
             'translation_model': 'gpt-4o',
             'translation_base_url': 'https://api.openai.com/v1',
-            'table_recognition_base_url': 'http://table.test',
-            'table_recognition_flavor': 'lattice',
             'mineru_base_url': 'http://mineru.test',
             'max_concurrent_tasks': 4,
           }),
@@ -74,8 +72,6 @@ void main() {
     expect(config.translationDefaultTargetLanguage, 'zh-CN');
     expect(config.translationModel, 'gpt-4o');
     expect(config.translationBaseUrl, 'https://api.openai.com/v1');
-    expect(config.tableRecognitionBaseUrl, 'http://table.test');
-    expect(config.tableRecognitionFlavor, 'lattice');
     expect(config.mineruBaseUrl, 'http://mineru.test');
     expect(config.maxConcurrentTasks, 4);
   });
@@ -229,16 +225,35 @@ void main() {
     );
   });
 
-  test('multipart 只发送勾选的开关，且值为 on', () {
+  test('multipart 只发送勾选且当前方案支持的开关，且值为 on', () {
     final settings = JobSettingsController();
+    settings.extractBackend = 'mineru';
     settings.formulaRecognitionEnabled = true;
+    settings.tableRecognitionEnabled = true;
 
-    final fields = settings.toMultipartFields();
+    var fields = settings.toMultipartFields();
     expect(fields['formula_recognition_enabled'], 'on');
+    expect(fields['table_recognition_enabled'], 'on');
     // 没勾的开关完全不出现在请求里，与 HTML 表单的行为一致。
+    expect(fields.containsKey('ocr_enabled'), isFalse);
+    expect(fields['extract_backend'], 'mineru');
+    expect(fields.containsKey('table_recognition_base_url'), isFalse);
+    expect(fields.containsKey('table_recognition_flavor'), isFalse);
+
+    // 桌面端原生模式不发送公式、表格、OCR 等 MinerU 识别字段。
+    settings.extractBackend = 'native';
+    fields = settings.toMultipartFields();
+    expect(fields.containsKey('formula_recognition_enabled'), isFalse);
     expect(fields.containsKey('table_recognition_enabled'), isFalse);
     expect(fields.containsKey('ocr_enabled'), isFalse);
     expect(fields['extract_backend'], 'native');
+
+    final retryFields = settings.toRetryFields();
+    expect(retryFields['formula_recognition_enabled'], isFalse);
+    expect(retryFields['table_recognition_enabled'], isFalse);
+    expect(retryFields['ocr_enabled'], isFalse);
+    expect(retryFields.containsKey('table_recognition_base_url'), isFalse);
+    expect(retryFields.containsKey('table_recognition_flavor'), isFalse);
 
     settings.dispose();
   });

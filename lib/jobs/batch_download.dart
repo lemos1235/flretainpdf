@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+
 import '../api/api_client.dart';
 
 /// 批量下载的结果汇总
@@ -174,3 +176,26 @@ Future<void> viewPdfArtifact({
   await openFileInSystemViewer(targetFile.path);
 }
 
+/// 将译文 PDF 保存到用户选择的本地路径
+Future<String?> savePdfArtifact({
+  required ApiClient api,
+  required JobSummary job,
+}) async {
+  final bytes = await api.downloadArtifact(job.translatedPdfUrl);
+  final defaultName = suggestPdfFileName(job);
+  final uri = await FilePicker.saveFile(
+    dialogTitle: '保存译文 PDF',
+    fileName: defaultName,
+    type: FileType.custom,
+    allowedExtensions: ['pdf'],
+    bytes: bytes,
+  );
+  if (uri == null) {
+    return null;
+  }
+  try {
+    return uri.toFilePath();
+  } catch (_) {
+    return Uri.decodeFull(uri.path);
+  }
+}

@@ -27,8 +27,9 @@ Future<void> _pumpList(
   Future<void> Function(JobSummary job)? onRetry,
   Future<void> Function()? onRefresh,
   http.Client? client,
+  Size surfaceSize = const Size(900, 1200),
 }) async {
-  await tester.binding.setSurfaceSize(const Size(900, 1200));
+  await tester.binding.setSurfaceSize(surfaceSize);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final api = ApiClient(
     // 渲染阶段不发请求，默认给个永远不该被调用的 client。
@@ -80,11 +81,11 @@ void main() {
     expect(find.text('删除任务'), findsNothing);
   });
 
-  testWidgets('失败的任务：显示重试按钮', (tester) async {
+  testWidgets('失败的任务：显示重试按钮，不再展示单个删除按钮', (tester) async {
     await _pumpList(tester, _job(status: 'failed'));
 
     expect(find.text('重试'), findsOneWidget);
-    expect(find.text('删除任务'), findsOneWidget);
+    expect(find.text('删除任务'), findsNothing);
   });
 
   testWidgets('重试失败时把错误显示在卡片上，而不是静默吞掉', (tester) async {
@@ -203,7 +204,7 @@ void main() {
     expect(refreshCount, 1);
   });
 
-  testWidgets('存在已完成任务时显示已完成徽标和批量操作按钮', (tester) async {
+  testWidgets('存在已完成任务时显示已完成徽标和批量选择按钮', (tester) async {
     await _pumpList(
       tester,
       JobSummary(
@@ -222,8 +223,8 @@ void main() {
     );
 
     expect(find.text('1 个已完成'), findsOneWidget);
-    expect(find.byTooltip('批量下载已完成任务'), findsOneWidget);
     expect(find.byTooltip('批量选择'), findsOneWidget);
+    expect(find.byTooltip('批量下载已完成任务'), findsNothing);
     expect(find.text('查看 PDF'), findsOneWidget);
   });
 
@@ -291,6 +292,7 @@ void main() {
     // 默认全选可下载任务
     expect(find.text('已选中 2 / 2 项'), findsOneWidget);
     expect(find.text('下载选中 (2)'), findsOneWidget);
+    expect(find.text('删除 (2)'), findsOneWidget);
     expect(find.text('取消全选'), findsOneWidget);
 
     // 取消全选
@@ -299,12 +301,16 @@ void main() {
 
     expect(find.text('已选中 0 / 2 项'), findsOneWidget);
     expect(find.text('全选'), findsOneWidget);
+    expect(find.text('下载选中'), findsOneWidget);
+    expect(find.text('删除'), findsOneWidget);
 
     // 重新全选
     await tester.tap(find.text('全选'));
     await tester.pumpAndSettle();
 
     expect(find.text('已选中 2 / 2 项'), findsOneWidget);
+    expect(find.text('下载选中 (2)'), findsOneWidget);
+    expect(find.text('删除 (2)'), findsOneWidget);
 
     // 退出多选
     await tester.tap(find.byTooltip('退出多选'));
@@ -312,5 +318,137 @@ void main() {
 
     expect(find.text('已选中 2 / 2 项'), findsNothing);
   });
-}
 
+  testWidgets('批量删除任务：弹出确认框并在确认后调用 DELETE 接口', (tester) async {
+    final deletedJobIds = <String>[];
+    var refreshCount = 0;
+
+    await _pumpList(
+      tester,
+      JobSummary(
+        jobId: 'job-1',
+        filename: 'done1.pdf',
+        status: 'completed',
+        step: 'completed',
+        message: '',
+        targetLanguage: 'zh-CN',
+        pages: '',
+        skipPages: '',
+        pageCount: 1,
+        translatedPdfUrl: '/files/done1.pdf',
+      ),
+      additionalJobs: [
+        JobSummary(
+          jobId: 'job-2',
+          filename: 'failed2.pdf',
+          status: 'failed',
+          step: 'failed',
+          message: '错误',
+          targetLanguage: 'en',
+          pages: '',
+          skipPages: '',
+          pageCount: 2,
+          translatedPdfUrl: '',
+        ),
+      ],
+      onRefresh: () async {
+        refreshCount++;
+      },
+      client: MockClient((request) async {
+        if (request.method == 'DELETE') {
+          final uri = request.url.toString();
+          final id = uri.substring(uri.lastIndexOf('/') + 1);
+          deletedJobIds.add(id);
+          return http.Response('', 204);
+        }
+        return http.Response('Not Found', 404);
+      }),
+    );
+
+    // 开启批量选择
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('已选中 2 / 2 项'), findsOneWidget);
+    expect(find.text('下载选中 (1)'), findsOneWidget);
+    expect(find.text('删除 (2)'), findsOneWidget);
+
+    // 点击删除按钮
+    await tester.tap(find.text('删除 (2)'));
+    await tester.pumpAndSettle();
+
+    // 弹出确认弹窗
+    expect(find.text('批量删除任务'), findsOneWidget);
+    expect(find.textContaining('将删除选中的 2 个任务'), findsOneWidget);
+
+    // 点击确认弹窗中的“删除”按钮
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    expect(deletedJobIds, containsAll(['job-1', 'job-2']));
+    expect(refreshCount, 1);
+  });
+
+  testWidgets('待处理任务开始运行后自动退出多选模式', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final api = ApiClient(
+      client: MockClient((_) async => http.Response('不该发请求', 500)),
+    )..apiToken = 'test-token';
+
+    Widget buildList(JobSummary job) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: JobListSection(
+            api: api,
+            jobs: [job],
+            onRefresh: () async {},
+            onRetry: (_) async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(buildList(_job(status: 'queued')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('退出多选'), findsWidgets);
+    expect(find.byType(Checkbox), findsOneWidget);
+
+    await tester.pumpWidget(buildList(_job(status: 'translating')));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('退出多选'), findsNothing);
+    expect(find.byType(Checkbox), findsNothing);
+  });
+
+  testWidgets('最小窗口宽度下任务操作栏不会溢出', (tester) async {
+    await _pumpList(
+      tester,
+      JobSummary(
+        jobId: 'job-1',
+        filename: 'done.pdf',
+        status: 'completed',
+        step: 'completed',
+        message: '全部完成',
+        targetLanguage: 'zh-CN',
+        pages: '1-3',
+        skipPages: '',
+        pageCount: 3,
+        translatedPdfUrl: '/files/done.pdf',
+      ),
+      surfaceSize: const Size(300, 1200),
+    );
+
+    expect(find.text('另存为…'), findsOneWidget);
+    expect(find.text('查看 PDF'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('下载选中 (1)'), findsOneWidget);
+    expect(find.text('删除 (1)'), findsOneWidget);
+    expect(find.byTooltip('退出多选'), findsWidgets);
+  });
+}

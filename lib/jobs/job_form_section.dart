@@ -161,10 +161,6 @@ class JobFormSectionState extends State<JobFormSection> {
         return _settings.pages.text;
       case 'skip_pages':
         return _settings.skipPages.text;
-      case 'table_recognition_base_url':
-        return _settings.tableRecognitionBaseUrl.text;
-      case 'table_recognition_flavor':
-        return _settings.tableRecognitionFlavor;
       case 'extract_backend':
         return _settings.extractBackend;
       case 'formula_recognition_enabled':
@@ -186,10 +182,6 @@ class JobFormSectionState extends State<JobFormSection> {
         _settings.pages.text = value;
       case 'skip_pages':
         _settings.skipPages.text = value;
-      case 'table_recognition_base_url':
-        _settings.tableRecognitionBaseUrl.text = value;
-      case 'table_recognition_flavor':
-        _settings.tableRecognitionFlavor = value;
       case 'extract_backend':
         _settings.extractBackend = value;
       case 'formula_recognition_enabled':

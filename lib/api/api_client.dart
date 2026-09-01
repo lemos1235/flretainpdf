@@ -17,8 +17,6 @@ class AppConfig {
     required this.translationDefaultTargetLanguage,
     required this.translationModel,
     required this.translationBaseUrl,
-    required this.tableRecognitionBaseUrl,
-    required this.tableRecognitionFlavor,
     required this.mineruBaseUrl,
     required this.maxConcurrentTasks,
   });
@@ -26,8 +24,6 @@ class AppConfig {
   final String translationDefaultTargetLanguage;
   final String translationModel;
   final String translationBaseUrl;
-  final String tableRecognitionBaseUrl;
-  final String tableRecognitionFlavor;
   final String mineruBaseUrl;
 
   /// 服务进程**当前**生效的同时执行任务数上限。它是启动时由环境变量定死的，
@@ -42,8 +38,6 @@ class AppConfig {
       ),
       translationModel: _string(json['translation_model']),
       translationBaseUrl: _string(json['translation_base_url']),
-      tableRecognitionBaseUrl: _string(json['table_recognition_base_url']),
-      tableRecognitionFlavor: _string(json['table_recognition_flavor']),
       mineruBaseUrl: _string(json['mineru_base_url']),
       maxConcurrentTasks: json['max_concurrent_tasks'] is num
           ? (json['max_concurrent_tasks'] as num).toInt()

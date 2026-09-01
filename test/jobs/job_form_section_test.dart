@@ -12,8 +12,6 @@ const _config = AppConfig(
   translationDefaultTargetLanguage: 'zh-CN',
   translationModel: 'test-model',
   translationBaseUrl: 'http://translator.test',
-  tableRecognitionBaseUrl: '',
-  tableRecognitionFlavor: 'lattice',
   mineruBaseUrl: '',
   maxConcurrentTasks: 2,
 );
@@ -153,5 +151,37 @@ void main() {
     await tester.pump();
 
     expect(() => state.buildRetryFields(), throwsA(isA<Exception>()));
+  });
+
+  testWidgets('切换版面方案时保留 MinerU 内容增强识别选项', (tester) async {
+    final api = _FakeApi();
+    await _pumpForm(tester, api, onJobCreated: () async {});
+
+    // 先展开「版面识别」折叠卡片
+    await tester.tap(find.text('版面识别'));
+    await tester.pumpAndSettle();
+
+    // 切换到 MinerU
+    await tester.tap(find.text('MinerU'));
+    await tester.pumpAndSettle();
+
+    // 开启公式识别和表格识别
+    await tester.tap(find.text('公式识别'));
+    await tester.tap(find.text('表格识别'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('MinerU · 增强已开'), findsOneWidget);
+
+    // 切换到原生启发式
+    await tester.tap(find.text('原生启发式'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('原生启发式'), findsWidgets);
+
+    // 切换回 MinerU，验证之前的增强选项依然勾选
+    await tester.tap(find.text('MinerU'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('MinerU · 增强已开'), findsOneWidget);
   });
 }
