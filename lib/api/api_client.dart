@@ -11,6 +11,10 @@ String baseUrl = 'http://127.0.0.1:40010';
 
 const _tokenHeader = 'X-RetainPDF-Token';
 
+/// 服务端 `MAX_BATCH_DELETE_IDS`：一次批量删除最多接受这么多个 job_id，
+/// 超了整条请求会被 400 拒掉。
+const maxBatchDeleteIds = 200;
+
 /// `/api/config` 的返回，用来给表单填服务端默认值。
 class AppConfig {
   const AppConfig({
@@ -59,6 +63,7 @@ class JobSummary {
     required this.skipPages,
     required this.pageCount,
     required this.translatedPdfUrl,
+    this.comparePdfUrl = '',
   });
 
   final String jobId;
@@ -71,6 +76,28 @@ class JobSummary {
   final String skipPages;
   final int? pageCount;
   final String translatedPdfUrl;
+
+  /// 原文 / 译文对照 PDF。它不是任务本身的产物，要另外调 [ApiClient.generateComparePdf]
+  /// 合成，没合成过（或合成失败）时是空串。
+  final String comparePdfUrl;
+
+  /// 只用来就地补上刚合成好的对照件地址：`POST /compare` 是同步返回的，拿到
+  /// 地址就能让按钮立刻出现，不用干等下一轮轮询。
+  JobSummary copyWith({String? comparePdfUrl}) {
+    return JobSummary(
+      jobId: jobId,
+      filename: filename,
+      status: status,
+      step: step,
+      message: message,
+      targetLanguage: targetLanguage,
+      pages: pages,
+      skipPages: skipPages,
+      pageCount: pageCount,
+      translatedPdfUrl: translatedPdfUrl,
+      comparePdfUrl: comparePdfUrl ?? this.comparePdfUrl,
+    );
+  }
 
   factory JobSummary.fromJson(Map<String, dynamic> json) {
     final artifacts = json['artifacts'];
@@ -89,8 +116,97 @@ class JobSummary {
       translatedPdfUrl: artifacts is Map
           ? _string(artifacts['translated_pdf_url'])
           : '',
+      comparePdfUrl: artifacts is Map
+          ? _string(artifacts['compare_pdf_url'])
+          : '',
     );
   }
+}
+
+/// `POST /api/jobs/:id/compare` 的返回。
+class ComparePdfResult {
+  const ComparePdfResult({
+    required this.comparePdfUrl,
+    required this.pageCount,
+    required this.generated,
+  });
+
+  final String comparePdfUrl;
+
+  /// 对照件的页数，服务端按源文档页数给。
+  final int pageCount;
+
+  /// 这次是真的重新合成了，还是复用了盘上已有的那份。
+  final bool generated;
+
+  factory ComparePdfResult.fromJson(Map<String, dynamic> json) {
+    return ComparePdfResult(
+      comparePdfUrl: _string(json['compare_pdf_url']),
+      pageCount: json['page_count'] is num
+          ? (json['page_count'] as num).toInt()
+          : 0,
+      generated: json['generated'] == true,
+    );
+  }
+}
+
+/// 批量删除里失败的那一项。[reason] 是服务端给的原话，例如「任务还在处理中，
+/// 无法删除」或「任务不存在」。
+class BatchDeleteFailure {
+  const BatchDeleteFailure({required this.jobId, required this.reason});
+
+  final String jobId;
+  final String reason;
+
+  factory BatchDeleteFailure.fromJson(Map<String, dynamic> json) {
+    return BatchDeleteFailure(
+      jobId: _string(json['job_id']),
+      reason: _string(json['reason']),
+    );
+  }
+}
+
+/// `POST /api/jobs/batch-delete` 的返回。
+class BatchDeleteResult {
+  const BatchDeleteResult({required this.deleted, required this.failed});
+
+  /// 成功删掉的任务 id。
+  final List<String> deleted;
+
+  /// 没删掉的任务，各自带上原因。
+  final List<BatchDeleteFailure> failed;
+
+  int get deletedCount => deleted.length;
+  int get failedCount => failed.length;
+
+  factory BatchDeleteResult.fromJson(Map<String, dynamic> json) {
+    final deleted = json['deleted'];
+    final failed = json['failed'];
+    return BatchDeleteResult(
+      // 计数字段（`deleted_count`/`failed_count`）跟列表是同一份事实的两种说法，
+      // 只认列表，省得两边对不上时还要挑一个信。
+      deleted: deleted is List ? deleted.map(_string).toList() : const [],
+      failed: failed is List
+          ? failed
+                .whereType<Map<String, dynamic>>()
+                .map(BatchDeleteFailure.fromJson)
+                .toList()
+          : const [],
+    );
+  }
+}
+
+/// 带上 HTTP 状态码的接口异常，调用方要靠它区分「重试没意义」（404）和
+/// 「值得再试一次」（409、5xx）。
+class ApiException implements Exception {
+  const ApiException(this.statusCode, this.message);
+
+  final int statusCode;
+  final String message;
+
+  /// 不带 `Exception: ` 前缀，[describeError] 直接拿它当提示文案。
+  @override
+  String toString() => message;
 }
 
 class ApiClient {
@@ -180,6 +296,22 @@ class ApiClient {
     return JobSummary.fromJson(_decodeObject(response, '重试任务失败'));
   }
 
+  /// 让服务端把原文和译文合成一份对照 PDF。合成是**同步**的：请求返回时文件
+  /// 已经在盘上，地址也一并给回来，不必等下一轮 [fetchJobs]。接口幂等，已有
+  /// 新鲜产物时直接复用（[ComparePdfResult.generated] 为 false）。
+  ///
+  /// 只有已完成的任务能合成，未完成或译文缺失是 404（重试没意义）；合成期间
+  /// 任务状态或译文变了是 409（值得重试）。
+  Future<ComparePdfResult> generateComparePdf(String jobId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/jobs/${Uri.encodeComponent(jobId)}/compare'),
+      headers: _authHeaders,
+    );
+    return ComparePdfResult.fromJson(
+      _decodeObject(response, '生成对照 PDF 失败'),
+    );
+  }
+
   /// 清空可清理的任务及其源文件与产物。清理接口要求至少提供一个筛选条件，
   /// `keep_latest: 0` 表示不保留任何符合服务端清理条件的历史任务。
   Future<int> clearJobs() async {
@@ -205,8 +337,37 @@ class ApiClient {
       headers: _authHeaders,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(_errorMessage(response, '删除任务失败'));
+      throw ApiException(
+        response.statusCode,
+        _errorMessage(response, '删除任务失败'),
+      );
     }
+  }
+
+  /// 一次删掉一批任务。服务端会去重，运行中和不存在的任务落在 `failed` 里，
+  /// 不影响其余任务照常删除。
+  ///
+  /// 服务端单次上限 [maxBatchDeleteIds] 个，超了整条请求会被 400 拒掉，所以
+  /// 这里按上限切片顺序发，再把各批结果并起来——分批是接口约束，不该漏给每个
+  /// 调用方各写一遍。空列表直接返回空结果：服务端对空 `job_ids` 是 400，但
+  /// 「没什么可删的」不该表现成一个错误。
+  Future<BatchDeleteResult> batchDeleteJobs(List<String> jobIds) async {
+    final deleted = <String>[];
+    final failed = <BatchDeleteFailure>[];
+    for (var start = 0; start < jobIds.length; start += maxBatchDeleteIds) {
+      final end = (start + maxBatchDeleteIds).clamp(0, jobIds.length);
+      final response = await _client.post(
+        Uri.parse('$baseUrl/api/jobs/batch-delete'),
+        headers: {..._authHeaders, 'Content-Type': 'application/json'},
+        body: jsonEncode({'job_ids': jobIds.sublist(start, end)}),
+      );
+      final result = BatchDeleteResult.fromJson(
+        _decodeObject(response, '批量删除任务失败'),
+      );
+      deleted.addAll(result.deleted);
+      failed.addAll(result.failed);
+    }
+    return BatchDeleteResult(deleted: deleted, failed: failed);
   }
 
   /// 把产物整份读进内存，交给保存对话框写盘。译文 PDF 体量有限，不做流式。
@@ -216,7 +377,12 @@ class ApiClient {
       headers: _authHeaders,
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('下载失败（HTTP ${response.statusCode}）');
+      // 失败时 body 是 AppError 的 JSON，里面那句（「译文 PDF 尚未生成」之类）
+      // 比一个裸状态码有用；不是 JSON 就退回状态码。
+      throw ApiException(
+        response.statusCode,
+        _errorMessage(response, '下载失败'),
+      );
     }
     return response.bodyBytes;
   }
@@ -244,7 +410,7 @@ dynamic _decode(http.Response response, String fallback) {
     decoded = null;
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
-    throw Exception(_errorMessage(response, fallback));
+    throw ApiException(response.statusCode, _errorMessage(response, fallback));
   }
   if (decoded == null) {
     throw Exception('$fallback：返回不是合法 JSON');

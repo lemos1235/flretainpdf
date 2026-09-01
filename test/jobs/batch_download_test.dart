@@ -13,6 +13,7 @@ JobSummary _createJob({
   required String status,
   required String url,
   String targetLang = 'zh-CN',
+  String compareUrl = '',
 }) {
   return JobSummary(
     jobId: jobId,
@@ -25,6 +26,7 @@ JobSummary _createJob({
     skipPages: '',
     pageCount: 1,
     translatedPdfUrl: url,
+    comparePdfUrl: compareUrl,
   );
 }
 
@@ -84,6 +86,55 @@ void main() {
     });
   });
 
+  group('resolveBatchDownloadItems', () {
+    final jobs = [
+      _createJob(
+        jobId: '1',
+        filename: 'both.pdf',
+        status: 'completed',
+        url: '/files/1.pdf',
+        compareUrl: '/files/1-compare.pdf',
+      ),
+      _createJob(
+        jobId: '2',
+        filename: 'only-translated.pdf',
+        status: 'completed',
+        url: '/files/2.pdf',
+      ),
+      _createJob(
+        jobId: '3',
+        filename: 'unfinished.pdf',
+        status: 'translating',
+        url: '',
+        compareUrl: '/files/3-compare.pdf',
+      ),
+    ];
+
+    test('仅译文只取译文件', () {
+      final items = resolveBatchDownloadItems(
+        jobs,
+        BatchDownloadKind.translated,
+      );
+      expect(items.map((item) => item.url), ['/files/1.pdf', '/files/2.pdf']);
+      expect(items.first.fileName, 'both-zh-CN.pdf');
+    });
+
+    test('仅对照只取已合成对照件的任务', () {
+      final items = resolveBatchDownloadItems(jobs, BatchDownloadKind.compare);
+      expect(items.map((item) => item.url), ['/files/1-compare.pdf']);
+      expect(items.single.fileName, 'both-zh-CN-compare.pdf');
+    });
+
+    test('译文 + 对照把同一任务拆成两份，缺对照件的只出译文', () {
+      final items = resolveBatchDownloadItems(jobs, BatchDownloadKind.both);
+      expect(items.map((item) => item.url), [
+        '/files/1.pdf',
+        '/files/1-compare.pdf',
+        '/files/2.pdf',
+      ]);
+    });
+  });
+
   group('resolveUniqueFile', () {
     late Directory tempDir;
 
@@ -99,7 +150,10 @@ void main() {
 
     test('文件不存在时直接使用原名', () {
       final file = resolveUniqueFile(tempDir.path, 'out.pdf');
-      expect(file.path, equals('${tempDir.path}${Platform.pathSeparator}out.pdf'));
+      expect(
+        file.path,
+        equals('${tempDir.path}${Platform.pathSeparator}out.pdf'),
+      );
     });
 
     test('文件存在时自动追加递增序号', () {
@@ -121,7 +175,8 @@ void main() {
     });
 
     test('路径末尾包含分隔符时不会生成双重分隔符', () {
-      final pathWithTrailingSeparator = '${tempDir.path}${Platform.pathSeparator}';
+      final pathWithTrailingSeparator =
+          '${tempDir.path}${Platform.pathSeparator}';
       final file = resolveUniqueFile(pathWithTrailingSeparator, 'single.pdf');
       expect(
         file.path,
@@ -157,21 +212,13 @@ void main() {
           status: 'completed',
           url: '/files/doc2.pdf',
         ),
-        _createJob(
-          jobId: '3',
-          filename: 'doc3.pdf',
-          status: 'failed',
-          url: '',
-        ),
+        _createJob(jobId: '3', filename: 'doc3.pdf', status: 'failed', url: ''),
       ];
 
       final progressList = <String>[];
       final api = ApiClient(
         client: MockClient((request) async {
-          return http.Response.bytes(
-            Uint8List.fromList([1, 2, 3, 4]),
-            200,
-          );
+          return http.Response.bytes(Uint8List.fromList([1, 2, 3, 4]), 200);
         }),
       )..apiToken = 'token';
 
@@ -189,8 +236,16 @@ void main() {
       expect(result.failed, 0);
       expect(result.isAllSuccess, isTrue);
       expect(progressList.length, 2);
-      expect(File('${tempDir.path}${Platform.pathSeparator}doc1-zh-CN.pdf').existsSync(), isTrue);
-      expect(File('${tempDir.path}${Platform.pathSeparator}doc2-zh-CN.pdf').existsSync(), isTrue);
+      expect(
+        File('${tempDir.path}${Platform.pathSeparator}doc1-zh-CN.pdf')
+            .existsSync(),
+        isTrue,
+      );
+      expect(
+        File('${tempDir.path}${Platform.pathSeparator}doc2-zh-CN.pdf')
+            .existsSync(),
+        isTrue,
+      );
     });
 
     test('部分失败时记录错误并继续处理其余文件', () async {
@@ -229,11 +284,99 @@ void main() {
       expect(result.failed, 1);
       expect(result.errors.length, 1);
       expect(result.errors.first, contains('doc1.pdf'));
-      expect(File('${tempDir.path}${Platform.pathSeparator}doc2-zh-CN.pdf').existsSync(), isTrue);
+      expect(
+        File('${tempDir.path}${Platform.pathSeparator}doc2-zh-CN.pdf')
+            .existsSync(),
+        isTrue,
+      );
     });
   });
 
-  group('viewPdfArtifact', () {
+  group('runBatchDownload 的产物类型', () {
+    late Directory tempDir;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync(
+        'batch_download_kind_test_',
+      );
+    });
+
+    tearDown(() {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test('译文 + 对照会各存一份，文件名不冲突', () async {
+      final jobs = [
+        _createJob(
+          jobId: '1',
+          filename: 'doc.pdf',
+          status: 'completed',
+          url: '/files/doc.pdf',
+          compareUrl: '/files/doc-compare.pdf',
+        ),
+      ];
+
+      final requested = <String>[];
+      final api = ApiClient(
+        client: MockClient((request) async {
+          requested.add(request.url.path);
+          return http.Response.bytes(Uint8List.fromList([1, 2]), 200);
+        }),
+      )..apiToken = 'token';
+
+      final result = await runBatchDownload(
+        api: api,
+        jobs: jobs,
+        kind: BatchDownloadKind.both,
+        targetDirectory: tempDir.path,
+      );
+
+      expect(requested, ['/files/doc.pdf', '/files/doc-compare.pdf']);
+      expect(result.total, 2);
+      expect(result.succeeded, 2);
+      final separator = Platform.pathSeparator;
+      expect(
+        File('${tempDir.path}${separator}doc-zh-CN.pdf').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('${tempDir.path}${separator}doc-zh-CN-compare.pdf').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('对照件下载失败时错误里标出是对照件', () async {
+      final jobs = [
+        _createJob(
+          jobId: '1',
+          filename: 'doc.pdf',
+          status: 'completed',
+          url: '/files/doc.pdf',
+          compareUrl: '/files/doc-compare.pdf',
+        ),
+      ];
+
+      final api = ApiClient(
+        client: MockClient((request) async => http.Response('Not Found', 404)),
+      )..apiToken = 'token';
+
+      final result = await runBatchDownload(
+        api: api,
+        jobs: jobs,
+        kind: BatchDownloadKind.compare,
+        targetDirectory: tempDir.path,
+      );
+
+      expect(result.failed, 1);
+      expect(result.errors.single, contains('doc.pdf（对照）'));
+    });
+  });
+
+  // 只测到落盘为止：`viewPdfArtifact` 的最后一步会调 `open`/`xdg-open` 把
+  // 文件交给系统默认程序，跑测试时会真的弹出一个 PDF 阅读器窗口。
+  group('downloadPdfArtifactForPreview', () {
     test('正确下载产物并写入预览临时文件', () async {
       final job = _createJob(
         jobId: 'test-job-99',
@@ -249,12 +392,16 @@ void main() {
         }),
       )..apiToken = 'token';
 
-      await viewPdfArtifact(api: api, job: job);
+      final targetFile = await downloadPdfArtifactForPreview(
+        api: api,
+        job: job,
+      );
 
       final previewDir = Directory(
         '${Directory.systemTemp.path}${Platform.pathSeparator}retainpdf_preview',
       );
-      final targetFile = File(
+      expect(
+        targetFile.path,
         '${previewDir.path}${Platform.pathSeparator}test-job-99_preview_doc-zh-CN.pdf',
       );
       expect(targetFile.existsSync(), isTrue);
@@ -267,4 +414,3 @@ void main() {
     });
   });
 }
-

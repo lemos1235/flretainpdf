@@ -15,12 +15,29 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
+/// 一轮轮询最多触发几个对照合成。存量历史任务可能很多，不设上限会一次性把
+/// 请求全压给服务端。
+const _autoCompareMaxBatch = 3;
+
+/// 同一个任务最多自动重试几次合成。服务端重启、网络抖动这类瞬时失败值得再试，
+/// 但一直失败就别拿轮询反复砸服务端了。
+const _autoCompareMaxAttempts = 3;
+
 class _HomePageState extends State<HomePage> {
   ApiClient get _api => widget.api;
   Timer? _pollTimer;
   List<JobSummary> _jobs = const [];
   String _listError = '';
   final _formKey = GlobalKey<JobFormSectionState>();
+
+  /// 本次运行里不再自动合成对照的任务：合成成功的，以及失败次数已经到顶的。
+  /// 免得三秒一次的轮询对同一个任务反复 POST。任务重新跑起来时会被清掉，那时
+  /// 算新一轮。
+  final Set<String> _comparedJobs = <String>{};
+
+  /// 各任务自动合成连续失败的次数，到 [_autoCompareMaxAttempts] 就不再重试。
+  final Map<String, int> _compareFailures = <String, int>{};
+  bool _autoCompareRunning = false;
 
   @override
   void initState() {
@@ -48,11 +65,96 @@ class _HomePageState extends State<HomePage> {
         _jobs = jobs;
         _listError = '';
       });
+      bool isStale(String jobId) =>
+          !jobs.any((job) => job.jobId == jobId && job.status == 'completed');
+      _comparedJobs.removeWhere((jobId) => isStale(jobId));
+      _compareFailures.removeWhere((jobId, _) => isStale(jobId));
+      unawaited(_runAutoCompareQueue());
     } catch (error) {
       if (mounted) {
         setState(() => _listError = describeError(error));
       }
     }
+  }
+
+  /// 任务完成后自动合成对照 PDF。服务端是同步合成的，返回时地址就有了，直接
+  /// 补进本地列表让「对照 PDF」按钮立刻出现，不必干等下一轮轮询。
+  Future<void> _runAutoCompareQueue() async {
+    if (_autoCompareRunning) {
+      return;
+    }
+    _autoCompareRunning = true;
+    // 失败的任务会被放回队列，本轮里得记着别再挑第二次，不然三个名额可能全
+    // 花在同一个任务上。
+    final attempted = <String>{};
+    try {
+      for (var processed = 0; processed < _autoCompareMaxBatch; processed++) {
+        final pending = _jobs
+            .where(
+              (job) =>
+                  job.status == 'completed' &&
+                  job.comparePdfUrl.isEmpty &&
+                  !_comparedJobs.contains(job.jobId) &&
+                  !attempted.contains(job.jobId),
+            )
+            .toList();
+        if (pending.isEmpty) {
+          break;
+        }
+        final target = pending.first;
+        attempted.add(target.jobId);
+        // 先占位，免得请求还在飞的时候下一轮轮询又挑中同一个任务。
+        _comparedJobs.add(target.jobId);
+        try {
+          final result = await _api.generateComparePdf(target.jobId);
+          _compareFailures.remove(target.jobId);
+          if (!mounted) {
+            return;
+          }
+          _applyComparePdfUrl(target.jobId, result.comparePdfUrl);
+        } catch (error) {
+          // 合成失败不打扰用户：按钮本来就没出现。可重试的失败放回队列等下一
+          // 轮轮询再试，连续失败到顶就留在集合里不再自动重试。
+          if (_isRetriableCompareError(error)) {
+            final failures = (_compareFailures[target.jobId] ?? 0) + 1;
+            _compareFailures[target.jobId] = failures;
+            if (failures < _autoCompareMaxAttempts) {
+              _comparedJobs.remove(target.jobId);
+            }
+          }
+        }
+        if (!mounted) {
+          return;
+        }
+      }
+    } finally {
+      _autoCompareRunning = false;
+    }
+  }
+
+  /// 把刚合成好的对照件地址补进本地任务列表。轮询期间任务可能已经被删掉或
+  /// 重跑，所以按 id 找，找不到就算了，下一轮轮询自会带回真实状态。
+  void _applyComparePdfUrl(String jobId, String comparePdfUrl) {
+    if (comparePdfUrl.isEmpty) {
+      return;
+    }
+    final index = _jobs.indexWhere((job) => job.jobId == jobId);
+    if (index < 0 || _jobs[index].comparePdfUrl == comparePdfUrl) {
+      return;
+    }
+    final updated = List<JobSummary>.of(_jobs);
+    updated[index] = updated[index].copyWith(comparePdfUrl: comparePdfUrl);
+    setState(() => _jobs = updated);
+  }
+
+  /// 合成失败值不值得下一轮再试。404 是「任务不存在 / 尚未完成 / 译文缺失」，
+  /// 这些在任务重跑之前不会变，重试只是白费请求；409（合成期间状态或译文变了）
+  /// 和 5xx、网络故障都是瞬时的，值得再试。
+  bool _isRetriableCompareError(Object error) {
+    if (error is ApiException) {
+      return error.statusCode != 404;
+    }
+    return true;
   }
 
   /// 在原任务上重试：源文件用服务端保存的那份，参数取当前表单的最新值。

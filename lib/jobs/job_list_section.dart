@@ -114,6 +114,12 @@ class _JobListSectionState extends State<JobListSection> {
     final selectedDownloadableCount = downloadableJobs
         .where((j) => _selectedJobIds.contains(j.jobId))
         .length;
+    final selectedCompareCount = downloadableJobs
+        .where(
+          (j) =>
+              _selectedJobIds.contains(j.jobId) && j.comparePdfUrl.isNotEmpty,
+        )
+        .length;
     final canClear = finishedCount > 0;
     final canBatchOperate = selectableCount > 0;
 
@@ -251,6 +257,7 @@ class _JobListSectionState extends State<JobListSection> {
               totalSelectable: selectableCount,
               selectedCount: validSelectedCount,
               selectedDownloadableCount: selectedDownloadableCount,
+              selectedCompareCount: selectedCompareCount,
               onSelectAll: _selectAll,
               onUnselectAll: _unselectAll,
               onDownloadSelected: _downloadSelectedJobs,
@@ -286,27 +293,29 @@ class _JobListSectionState extends State<JobListSection> {
   }
 
   /// 批量下载勾选的任务
-  Future<void> _downloadSelectedJobs() async {
+  Future<void> _downloadSelectedJobs(BatchDownloadKind kind) async {
     final jobsToDownload = widget.jobs
-        .where(
-          (j) =>
-              _selectedJobIds.contains(j.jobId) &&
-              j.status == 'completed' &&
-              j.translatedPdfUrl.isNotEmpty,
-        )
+        .where((j) => _selectedJobIds.contains(j.jobId))
         .toList();
+    final items = resolveBatchDownloadItems(jobsToDownload, kind);
 
-    if (jobsToDownload.isEmpty) {
+    if (items.isEmpty) {
+      // 菜单项的可点状态是上一帧算出来的，勾选变化和点击之间还有空档，所以
+      // 这里按产物类型说清楚到底缺什么，别一律怪用户没选完成的任务。
+      // 「译文 + 对照」只要有译文就不会走到这里，落到这儿说明两种产物都没有。
+      final message = kind == BatchDownloadKind.compare
+          ? '选中的任务还没有可下载的对照 PDF'
+          : '请先选择已完成的任务';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('请先选择已完成的任务'),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
         ),
       );
       return;
     }
 
-    await _executeBatchDownload(jobsToDownload);
+    await _executeBatchDownload(jobsToDownload, kind);
   }
 
   /// 批量删除勾选的任务
@@ -340,18 +349,18 @@ class _JobListSectionState extends State<JobListSection> {
     }
 
     setState(() => _batchDeleting = true);
-    final failedNames = <String>[];
+    // 整批失败（网络断了、令牌不对）时这里是一条错误，服务端逐项判定的失败
+    // 则在 result.failed 里，两者分开报。
+    String? requestError;
+    var failures = const <BatchDeleteFailure>[];
     try {
-      await Future.wait(
-        jobsToDelete.map((job) async {
-          try {
-            await widget.api.deleteJob(job.jobId);
-            _selectedJobIds.remove(job.jobId);
-          } catch (_) {
-            failedNames.add(job.filename);
-          }
-        }),
+      final result = await widget.api.batchDeleteJobs(
+        jobsToDelete.map((job) => job.jobId).toList(),
       );
+      _selectedJobIds.removeAll(result.deleted);
+      failures = result.failed;
+    } catch (error) {
+      requestError = describeError(error);
     } finally {
       await widget.onRefresh().catchError((_) {});
       if (mounted) {
@@ -361,12 +370,13 @@ class _JobListSectionState extends State<JobListSection> {
             _selectionMode = false;
           }
         });
-        if (failedNames.isNotEmpty) {
+        final message = requestError != null
+            ? '批量删除失败：$requestError'
+            : _describeDeleteFailures(failures, jobsToDelete);
+        if (message != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                '${failedNames.length} 个任务删除失败：${failedNames.join('、')}',
-              ),
+              content: Text(message),
               duration: const Duration(seconds: 3),
             ),
           );
@@ -375,10 +385,39 @@ class _JobListSectionState extends State<JobListSection> {
     }
   }
 
+  /// 把服务端逐项给出的删除失败原因拼成一句提示。原因就那么两种（还在处理中、
+  /// 任务不存在），按原因归并比一个任务一行更短，也更说明问题。
+  String? _describeDeleteFailures(
+    List<BatchDeleteFailure> failures,
+    List<JobSummary> attempted,
+  ) {
+    if (failures.isEmpty) {
+      return null;
+    }
+    final names = {for (final job in attempted) job.jobId: job.filename};
+    final grouped = <String, List<String>>{};
+    for (final failure in failures) {
+      // 服务端只回 job_id，落到界面上得换成用户认得的文件名；这个 id 不在本次
+      // 提交的列表里（列表刚被别处刷新过），或者文件名本身是空的（缺字段时
+      // JobSummary.filename 就是空串），都退回显示 id——总比只剩一个冒号好。
+      final name = names[failure.jobId]?.trim();
+      grouped
+          .putIfAbsent(failure.reason, () => <String>[])
+          .add(name == null || name.isEmpty ? failure.jobId : name);
+    }
+    final parts = grouped.entries.map(
+      (entry) => '${entry.value.join('、')}：${entry.key}',
+    );
+    return '${failures.length} 个任务删除失败——${parts.join('；')}';
+  }
+
   /// 执行批量下载主流程：选择目录 -> 展示下载弹窗 -> 下载文件 -> 报告结果
-  Future<void> _executeBatchDownload(List<JobSummary> jobsToDownload) async {
+  Future<void> _executeBatchDownload(
+    List<JobSummary> jobsToDownload,
+    BatchDownloadKind kind,
+  ) async {
     final outputDirectory = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择译文 PDF 保存文件夹',
+      dialogTitle: '选择 PDF 保存文件夹（${kind.label}）',
     );
 
     if (outputDirectory == null || !mounted) {
@@ -394,6 +433,7 @@ class _JobListSectionState extends State<JobListSection> {
         builder: (ctx) => _BatchDownloadDialog(
           api: widget.api,
           jobs: jobsToDownload,
+          kind: kind,
           targetDirectory: outputDirectory,
         ),
       );
@@ -501,6 +541,7 @@ class _BatchActionBar extends StatelessWidget {
     required this.totalSelectable,
     required this.selectedCount,
     required this.selectedDownloadableCount,
+    required this.selectedCompareCount,
     required this.onSelectAll,
     required this.onUnselectAll,
     required this.onDownloadSelected,
@@ -513,9 +554,12 @@ class _BatchActionBar extends StatelessWidget {
   final int totalSelectable;
   final int selectedCount;
   final int selectedDownloadableCount;
+
+  /// 选中的任务里已经合成了对照件的个数，为 0 时菜单里的对照项不可点。
+  final int selectedCompareCount;
   final VoidCallback onSelectAll;
   final VoidCallback onUnselectAll;
-  final VoidCallback onDownloadSelected;
+  final ValueChanged<BatchDownloadKind> onDownloadSelected;
   final VoidCallback onDeleteSelected;
   final VoidCallback onCancel;
   final bool isDownloading;
@@ -546,31 +590,15 @@ class _BatchActionBar extends StatelessWidget {
       ),
       child: Text(selectedCount < totalSelectable ? '全选' : '取消全选'),
     );
+    // 能下的产物有译文和对照两种，点按钮先弹菜单让用户挑；对照件是任务完成后
+    // 才合成的，选中的任务里一份都没有时，带对照的两项置灰。
     final actionButtons = <Widget>[
-      FilledButton.icon(
-        onPressed: selectedDownloadableCount > 0 && !isBusy
-            ? onDownloadSelected
-            : null,
-        icon: isDownloading
-            ? const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(LucideIcons.download, size: 13),
-        label: Text(
-          selectedDownloadableCount > 0
-              ? '下载选中 ($selectedDownloadableCount)'
-              : '下载选中',
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-        style: FilledButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        ),
+      _BatchDownloadDropdownButton(
+        selectedDownloadableCount: selectedDownloadableCount,
+        selectedCompareCount: selectedCompareCount,
+        onDownloadSelected: onDownloadSelected,
+        isDownloading: isDownloading,
+        isBusy: isBusy,
       ),
       OutlinedButton.icon(
         onPressed: selectedCount > 0 && !isBusy ? onDeleteSelected : null,
@@ -662,16 +690,180 @@ class _BatchActionBar extends StatelessWidget {
   }
 }
 
+/// 批量下载下拉菜单按钮（Claude 极简风格）
+class _BatchDownloadDropdownButton extends StatelessWidget {
+  const _BatchDownloadDropdownButton({
+    required this.selectedDownloadableCount,
+    required this.selectedCompareCount,
+    required this.onDownloadSelected,
+    required this.isDownloading,
+    required this.isBusy,
+  });
+
+  final int selectedDownloadableCount;
+  final int selectedCompareCount;
+  final ValueChanged<BatchDownloadKind> onDownloadSelected;
+  final bool isDownloading;
+  final bool isBusy;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final hasCompare = selectedCompareCount > 0;
+    final canDownload = selectedDownloadableCount > 0 && !isBusy;
+
+    return MenuAnchor(
+      alignmentOffset: const Offset(0, 4),
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(
+          theme.colorScheme.surfaceContainer,
+        ),
+        elevation: WidgetStatePropertyAll(isDark ? 4.0 : 2.0),
+        shadowColor: WidgetStatePropertyAll(
+          Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+        ),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        ),
+      ),
+      menuChildren: [
+        for (final kind in BatchDownloadKind.values)
+          _buildMenuItem(
+            context: context,
+            theme: theme,
+            kind: kind,
+            hasCompare: hasCompare,
+          ),
+      ],
+      builder: (context, controller, child) => FilledButton(
+        onPressed: canDownload
+            ? () => controller.isOpen ? controller.close() : controller.open()
+            : null,
+        style: FilledButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(7),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isDownloading)
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            else
+              const Icon(LucideIcons.download, size: 13),
+            const SizedBox(width: 6),
+            Text(
+              selectedDownloadableCount > 0
+                  ? '下载选中 ($selectedDownloadableCount)'
+                  : '下载选中',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            AnimatedRotation(
+              turns: controller.isOpen ? 0.5 : 0.0,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeInOut,
+              child: const Icon(LucideIcons.chevronDown, size: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuItem({
+    required BuildContext context,
+    required ThemeData theme,
+    required BatchDownloadKind kind,
+    required bool hasCompare,
+  }) {
+    final isEnabled = kind == BatchDownloadKind.translated || hasCompare;
+    final app = AppColors.of(context);
+
+    final IconData icon = switch (kind) {
+      BatchDownloadKind.translated => LucideIcons.fileText,
+      BatchDownloadKind.compare => LucideIcons.columns2,
+      BatchDownloadKind.both => LucideIcons.files,
+    };
+
+    final iconColor = isEnabled
+        ? theme.colorScheme.onSurfaceVariant
+        : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.35);
+
+    return MenuItemButton(
+      onPressed: isEnabled ? () => onDownloadSelected(kind) : null,
+      leadingIcon: Icon(icon, size: 14, color: iconColor),
+      style: MenuItemButton.styleFrom(
+        foregroundColor: theme.colorScheme.onSurface,
+        disabledForegroundColor: theme.colorScheme.onSurfaceVariant.withValues(
+          alpha: 0.38,
+        ),
+        backgroundColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      ).copyWith(
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.focused)) {
+            return app.accentSubtle;
+          }
+          if (states.contains(WidgetState.pressed)) {
+            return app.accentSubtle.withValues(alpha: 0.8);
+          }
+          return null;
+        }),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: Text(
+          kind.label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+            color: isEnabled
+                ? theme.colorScheme.onSurface
+                : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.38),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 批量下载进度及结果弹窗
 class _BatchDownloadDialog extends StatefulWidget {
   const _BatchDownloadDialog({
     required this.api,
     required this.jobs,
+    required this.kind,
     required this.targetDirectory,
   });
 
   final ApiClient api;
   final List<JobSummary> jobs;
+  final BatchDownloadKind kind;
   final String targetDirectory;
 
   @override
@@ -692,11 +884,12 @@ class _BatchDownloadDialogState extends State<_BatchDownloadDialog> {
   }
 
   Future<void> _startDownload() async {
-    _total = widget.jobs.length;
+    _total = resolveBatchDownloadItems(widget.jobs, widget.kind).length;
     try {
       final result = await runBatchDownload(
         api: widget.api,
         jobs: widget.jobs,
+        kind: widget.kind,
         targetDirectory: widget.targetDirectory,
         onProgress: (current, total, filename) {
           if (mounted) {
@@ -929,7 +1122,7 @@ class _JobCard extends StatefulWidget {
 class _JobCardState extends State<_JobCard> {
   bool _stepsExpanded = false;
   bool _viewing = false;
-  bool _saving = false;
+  bool _viewingCompare = false;
   bool _deleting = false;
   bool _retrying = false;
   String? _retryError;
@@ -1227,11 +1420,14 @@ class _JobCardState extends State<_JobCard> {
           onPressed: _retrying ? null : _retry,
           label: Text(_retrying ? '正在重试…' : '重试'),
         ),
-      if (isCompleted && job.translatedPdfUrl.isNotEmpty)
+      // 对照件由后台自动合成，合成好之前这个按钮不出现。
+      if (isCompleted && job.comparePdfUrl.isNotEmpty)
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(
             backgroundColor: theme.colorScheme.surface,
             foregroundColor: theme.colorScheme.onSurface,
+            disabledForegroundColor:
+                theme.colorScheme.onSurface.withValues(alpha: 0.7),
             side: BorderSide(color: theme.dividerColor),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(7),
@@ -1243,19 +1439,25 @@ class _JobCardState extends State<_JobCard> {
               fontWeight: FontWeight.w500,
             ),
           ),
-          icon: _saving
-              ? const SizedBox(
+          icon: _viewingCompare
+              ? SizedBox(
                   width: 12,
                   height: 12,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: theme.colorScheme.primary,
+                  ),
                 )
-              : const Icon(LucideIcons.download, size: 13),
-          onPressed: _saving ? null : _savePdfAs,
-          label: Text(_saving ? '保存中…' : '另存为…'),
+              : const Icon(LucideIcons.columns2, size: 13),
+          onPressed: _viewingCompare ? null : _viewComparePdf,
+          label: Text(_viewingCompare ? '正在打开…' : '对照 PDF'),
         ),
       if (isCompleted && job.translatedPdfUrl.isNotEmpty)
         FilledButton.icon(
           style: FilledButton.styleFrom(
+            disabledBackgroundColor:
+                theme.colorScheme.primary.withValues(alpha: 0.75),
+            disabledForegroundColor: theme.colorScheme.onPrimary,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(7),
             ),
@@ -1267,17 +1469,17 @@ class _JobCardState extends State<_JobCard> {
             ),
           ),
           icon: _viewing
-              ? const SizedBox(
+              ? SizedBox(
                   width: 12,
                   height: 12,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: theme.colorScheme.onPrimary,
                   ),
                 )
               : const Icon(LucideIcons.eye, size: 13),
           onPressed: _viewing ? null : _viewPdf,
-          label: Text(_viewing ? '正在打开…' : '查看 PDF'),
+          label: Text(_viewing ? '正在打开…' : '译文 PDF'),
         ),
       if (_cancelable)
         OutlinedButton.icon(
@@ -1388,7 +1590,7 @@ class _JobCardState extends State<_JobCard> {
     }
   }
 
-  /// 预览查看 PDF
+  /// 预览查看译文 PDF
   Future<void> _viewPdf() async {
     setState(() {
       _viewing = true;
@@ -1407,33 +1609,21 @@ class _JobCardState extends State<_JobCard> {
     }
   }
 
-  /// 另存为 PDF
-  Future<void> _savePdfAs() async {
+  /// 预览查看对照 PDF
+  Future<void> _viewComparePdf() async {
     setState(() {
-      _saving = true;
+      _viewingCompare = true;
       _retryError = null;
     });
     try {
-      final savedPath = await savePdfArtifact(api: widget.api, job: widget.job);
-      if (savedPath != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已成功保存至: $savedPath'),
-            action: SnackBarAction(
-              label: '打开文件',
-              onPressed: () => openFileInSystemViewer(savedPath),
-            ),
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
+      await viewPdfArtifact(api: widget.api, job: widget.job, compare: true);
     } catch (error) {
       if (mounted) {
         setState(() => _retryError = describeError(error));
       }
     } finally {
       if (mounted) {
-        setState(() => _saving = false);
+        setState(() => _viewingCompare = false);
       }
     }
   }

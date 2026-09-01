@@ -29,7 +29,10 @@ void main() {
               'pages': '1-3',
               'skip_pages': '',
               'page_count': 3,
-              'artifacts': {'translated_pdf_url': '/files/j1.pdf'},
+              'artifacts': {
+                'translated_pdf_url': '/files/j1.pdf',
+                'compare_pdf_url': '/files/j1-compare.pdf',
+              },
             },
           ]),
           200,
@@ -42,6 +45,7 @@ void main() {
     expect(jobs.single.jobId, 'j1');
     expect(jobs.single.pageCount, 3);
     expect(jobs.single.translatedPdfUrl, '/files/j1.pdf');
+    expect(jobs.single.comparePdfUrl, '/files/j1-compare.pdf');
     // 后端给的是相对路径，要能拼回可打开的绝对地址。
     expect(
       resolveArtifactUri(jobs.single.translatedPdfUrl).toString(),
@@ -108,6 +112,54 @@ void main() {
     expect(job.jobId, 'j1');
     expect(job.status, 'pending');
     expect(job.pages, '1-5');
+  });
+
+  test('合成对照 PDF 发 POST 到带 id 的地址，同步拿回产物地址', () async {
+    var called = 0;
+    final okApi = _testApi(
+      client: MockClient((request) async {
+        called++;
+        expect(request.method, 'POST');
+        expect(request.url.toString(), '$baseUrl/api/jobs/j%201/compare');
+        expect(request.headers['X-RetainPDF-Token'], 'test-token');
+        return http.Response(
+          jsonEncode({
+            'compare_pdf_url': '/api/jobs/j 1/artifacts/compare',
+            'page_count': 3,
+            'generated': true,
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+
+    final result = await okApi.generateComparePdf('j 1');
+    expect(called, 1);
+    expect(result.comparePdfUrl, '/api/jobs/j 1/artifacts/compare');
+    expect(result.pageCount, 3);
+    expect(result.generated, isTrue);
+
+    // 失败时用 body 里的 error 当提示，并保留状态码：调用方要靠它区分
+    // 「重试没意义」（404）和「值得再试」（409、5xx）。
+    final failingApi = _testApi(
+      client: MockClient(
+        (request) async => http.Response(
+          jsonEncode({'error': '任务尚未完成，无法生成对照 PDF'}),
+          404,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      failingApi.generateComparePdf('j1'),
+      throwsA(
+        isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 404)
+            .having((e) => e.message, 'message', contains('任务尚未完成')),
+      ),
+    );
   });
 
   test('创建任务以 multipart 发送文件与字段并返回 job_id', () async {
@@ -223,6 +275,59 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('批量删除按服务端上限分批发送并合并各批结果', () async {
+    final batches = <List<String>>[];
+    final api = _testApi(
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.toString(), '$baseUrl/api/jobs/batch-delete');
+        final payload = jsonDecode(request.body) as Map<String, dynamic>;
+        final ids = (payload['job_ids'] as List).cast<String>();
+        batches.add(ids);
+        // 每批的最后一个当成删不掉的，用来验证失败项也会跨批累加。
+        final failedId = ids.last;
+        final deleted = ids.sublist(0, ids.length - 1);
+        return http.Response(
+          jsonEncode({
+            'deleted_count': deleted.length,
+            'deleted': deleted,
+            'failed_count': 1,
+            'failed': [
+              {'job_id': failedId, 'reason': '任务还在处理中，无法删除'},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+
+    final ids = List.generate(maxBatchDeleteIds + 5, (i) => 'job-$i');
+    final result = await api.batchDeleteJobs(ids);
+
+    expect(batches.length, 2);
+    expect(batches.first.length, maxBatchDeleteIds);
+    expect(batches.last.length, 5);
+    expect(result.deletedCount, ids.length - 2);
+    expect(result.failedCount, 2);
+    expect(result.failed.first.reason, '任务还在处理中，无法删除');
+  });
+
+  test('批量删除的空列表不发请求：服务端对空 job_ids 是 400，但这不该算错误', () async {
+    var called = 0;
+    final api = _testApi(
+      client: MockClient((request) async {
+        called++;
+        return http.Response('{}', 200);
+      }),
+    );
+
+    final result = await api.batchDeleteJobs(const []);
+    expect(called, 0);
+    expect(result.deletedCount, 0);
+    expect(result.failedCount, 0);
   });
 
   test('multipart 只发送勾选且当前方案支持的开关，且值为 on', () {

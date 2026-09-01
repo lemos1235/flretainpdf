@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flretainpdf/api/api_client.dart';
 import 'package:flretainpdf/jobs/job_list_section.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +20,22 @@ JobSummary _job({required String status, String message = ''}) {
     skipPages: '',
     pageCount: null,
     translatedPdfUrl: '',
+  );
+}
+
+JobSummary _completedJob({String comparePdfUrl = ''}) {
+  return JobSummary(
+    jobId: 'job-1',
+    filename: 'done.pdf',
+    status: 'completed',
+    step: 'completed',
+    message: '全部完成',
+    targetLanguage: 'zh-CN',
+    pages: '1-3',
+    skipPages: '',
+    pageCount: 3,
+    translatedPdfUrl: '/files/done.pdf',
+    comparePdfUrl: comparePdfUrl,
   );
 }
 
@@ -225,10 +244,11 @@ void main() {
     expect(find.text('1 个已完成'), findsOneWidget);
     expect(find.byTooltip('批量选择'), findsOneWidget);
     expect(find.byTooltip('批量下载已完成任务'), findsNothing);
-    expect(find.text('查看 PDF'), findsOneWidget);
+    expect(find.text('译文 PDF'), findsOneWidget);
   });
 
-  testWidgets('点击查看 PDF 按钮时请求下载并在出错时显示错误', (tester) async {
+  testWidgets('点击译文 PDF 按钮时展示正在打开并在出错时显示错误', (tester) async {
+    final completer = Completer<http.Response>();
     await _pumpList(
       tester,
       JobSummary(
@@ -243,15 +263,105 @@ void main() {
         pageCount: 3,
         translatedPdfUrl: '/files/done.pdf',
       ),
-      client: MockClient((request) async {
-        return http.Response('Not Found', 404);
-      }),
+      client: MockClient((request) => completer.future),
     );
 
-    await tester.tap(find.text('查看 PDF'));
+    await tester.tap(find.text('译文 PDF'));
+    await tester.pump();
+
+    expect(find.text('正在打开…'), findsOneWidget);
+
+    completer.complete(http.Response('Not Found', 404));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('HTTP 404'), findsOneWidget);
+    expect(find.text('译文 PDF'), findsOneWidget);
+  });
+
+  testWidgets('对照件未合成时不显示对照 PDF 按钮，合成后才显示', (tester) async {
+    await _pumpList(tester, _completedJob());
+
+    expect(find.text('对照 PDF'), findsNothing);
+
+    await _pumpList(
+      tester,
+      _completedJob(comparePdfUrl: '/files/done-compare.pdf'),
+    );
+
+    expect(find.text('对照 PDF'), findsOneWidget);
+  });
+
+  testWidgets('点击对照 PDF 按钮时下载对照件并在出错时显示错误', (tester) async {
+    final completer = Completer<http.Response>();
+    final requestedPaths = <String>[];
+    await _pumpList(
+      tester,
+      _completedJob(comparePdfUrl: '/files/done-compare.pdf'),
+      client: MockClient((request) async {
+        requestedPaths.add(request.url.path);
+        return completer.future;
+      }),
+    );
+
+    await tester.tap(find.text('对照 PDF'));
+    await tester.pump();
+
+    expect(find.text('正在打开…'), findsOneWidget);
+
+    completer.complete(http.Response('Not Found', 404));
+    await tester.pumpAndSettle();
+
+    expect(requestedPaths, ['/files/done-compare.pdf']);
+    expect(find.textContaining('HTTP 404'), findsOneWidget);
+    expect(find.text('对照 PDF'), findsOneWidget);
+  });
+
+  testWidgets('下载选中按钮弹出产物类型菜单，没有对照件时对照项不可点', (tester) async {
+    await _pumpList(tester, _completedJob());
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('下载选中 (1)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('仅译文'), findsOneWidget);
+    expect(find.text('仅对照'), findsOneWidget);
+    expect(find.text('译文 + 对照'), findsOneWidget);
+    expect(
+      tester
+          .widget<MenuItemButton>(find.widgetWithText(MenuItemButton, '仅译文'))
+          .onPressed,
+      isNotNull,
+    );
+    for (final label in ['仅对照', '译文 + 对照']) {
+      expect(
+        tester
+            .widget<MenuItemButton>(find.widgetWithText(MenuItemButton, label))
+            .onPressed,
+        isNull,
+      );
+    }
+  });
+
+  testWidgets('选中的任务有对照件时菜单三项都可点', (tester) async {
+    await _pumpList(
+      tester,
+      _completedJob(comparePdfUrl: '/files/done-compare.pdf'),
+    );
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('下载选中 (1)'));
+    await tester.pumpAndSettle();
+
+    for (final label in ['仅译文', '仅对照', '译文 + 对照']) {
+      expect(
+        tester
+            .widget<MenuItemButton>(find.widgetWithText(MenuItemButton, label))
+            .onPressed,
+        isNotNull,
+      );
+    }
   });
 
   testWidgets('开启批量选择模式后展示多选操作栏与 Checkbox 并支持全选/取消全选', (tester) async {
@@ -319,7 +429,7 @@ void main() {
     expect(find.text('已选中 2 / 2 项'), findsNothing);
   });
 
-  testWidgets('批量删除任务：弹出确认框并在确认后调用 DELETE 接口', (tester) async {
+  testWidgets('批量删除任务：弹出确认框并在确认后只发一条 batch-delete', (tester) async {
     final deletedJobIds = <String>[];
     var refreshCount = 0;
 
@@ -355,11 +465,21 @@ void main() {
         refreshCount++;
       },
       client: MockClient((request) async {
-        if (request.method == 'DELETE') {
-          final uri = request.url.toString();
-          final id = uri.substring(uri.lastIndexOf('/') + 1);
-          deletedJobIds.add(id);
-          return http.Response('', 204);
+        if (request.method == 'POST' &&
+            request.url.path == '/api/jobs/batch-delete') {
+          final payload = jsonDecode(request.body) as Map<String, dynamic>;
+          final ids = (payload['job_ids'] as List).cast<String>();
+          deletedJobIds.addAll(ids);
+          return http.Response(
+            jsonEncode({
+              'deleted_count': ids.length,
+              'deleted': ids,
+              'failed_count': 0,
+              'failed': <Map<String, dynamic>>[],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
         }
         return http.Response('Not Found', 404);
       }),
@@ -385,8 +505,64 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
 
-    expect(deletedJobIds, containsAll(['job-1', 'job-2']));
+    // 两个任务只发一条 batch-delete，不再逐个 DELETE。
+    expect(deletedJobIds, ['job-1', 'job-2']);
     expect(refreshCount, 1);
+  });
+
+  testWidgets('批量删除的失败项按服务端给的原因归并提示', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _pumpList(
+      tester,
+      _completedJob(),
+      additionalJobs: [
+        JobSummary(
+          jobId: 'job-2',
+          filename: 'busy.pdf',
+          status: 'failed',
+          step: 'failed',
+          message: '错误',
+          targetLanguage: 'en',
+          pages: '',
+          skipPages: '',
+          pageCount: 2,
+          translatedPdfUrl: '',
+        ),
+      ],
+      onRefresh: () async {},
+      client: MockClient((request) async {
+        if (request.method == 'POST' &&
+            request.url.path == '/api/jobs/batch-delete') {
+          return http.Response(
+            jsonEncode({
+              'deleted_count': 1,
+              'deleted': ['job-1'],
+              'failed_count': 1,
+              'failed': [
+                {'job_id': 'job-2', 'reason': '任务还在处理中，无法删除'},
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }
+        return http.Response('Not Found', 404);
+      }),
+    );
+
+    await tester.tap(find.byTooltip('批量选择'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除 (2)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pumpAndSettle();
+
+    // 服务端只回 job_id，提示里得换成用户认得的文件名，并带上原话。
+    expect(
+      find.text('1 个任务删除失败——busy.pdf：任务还在处理中，无法删除'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('待处理任务开始运行后自动退出多选模式', (tester) async {
@@ -437,12 +613,13 @@ void main() {
         skipPages: '',
         pageCount: 3,
         translatedPdfUrl: '/files/done.pdf',
+        comparePdfUrl: '/files/done-compare.pdf',
       ),
       surfaceSize: const Size(300, 1200),
     );
 
-    expect(find.text('另存为…'), findsOneWidget);
-    expect(find.text('查看 PDF'), findsOneWidget);
+    expect(find.text('对照 PDF'), findsOneWidget);
+    expect(find.text('译文 PDF'), findsOneWidget);
 
     await tester.tap(find.byTooltip('批量选择'));
     await tester.pumpAndSettle();
